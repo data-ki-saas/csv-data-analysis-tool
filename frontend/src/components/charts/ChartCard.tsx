@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ChartRecommendation, QueryResponse } from "@/lib/api";
 import { queryDataset } from "@/lib/api";
 import { buildEffectiveSql, ChartFilter, DEFAULT_BIN_COUNT } from "@/lib/chartQueries";
+import { downloadChartAsJpg } from "@/lib/exportChartImage";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
 import { TimeSeriesChart } from "./TimeSeriesChart";
@@ -91,6 +92,18 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
       },
       { onSuccess: (data) => setInsights(data.insights) }
     );
+  }
+
+  function handleDownloadJpg(currentResult: QueryResponse) {
+    downloadChartAsJpg({
+      type: "chart",
+      id: recommendation.column,
+      title: recommendation.title,
+      chart_type: recommendation.chart_type,
+      partition_type: recommendation.partition_type,
+      column: recommendation.column,
+      result: currentResult,
+    });
   }
 
   function handlePin(currentResult: QueryResponse) {
@@ -185,6 +198,9 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
               className="underline disabled:opacity-50"
             >
               {pin.isPending ? "Pinning…" : pin.isSuccess ? "Pinned ✓" : "Pin to presentation"}
+            </button>
+            <button type="button" onClick={() => handleDownloadJpg(result)} className="underline">
+              Download JPG
             </button>
           </div>
         </>

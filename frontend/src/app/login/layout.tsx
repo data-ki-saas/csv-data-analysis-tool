@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 
-// Generated with backend/scripts/generate_seo.py --route /login
 export const metadata: Metadata = {
   title: "Sign In",
   description:

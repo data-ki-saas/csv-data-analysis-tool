@@ -306,10 +306,11 @@ There is no top-level build/test command — the two halves are run independentl
   the implementation based on `settings.llm_provider` ("anthropic" | "deepseek").
   DeepSeek's API is OpenAI-chat-completions-compatible, so its provider talks to it
   directly over `httpx` rather than pulling in an SDK. Callers so far: the AI-assisted
-  type review and report strategy engine above, and `backend/scripts/generate_seo.py`.
-  The eventual NL-to-SQL feature (see `_assert_readonly_select()` above) is expected to
-  be the next one. When adding a new provider, implement `LLMProvider` and add one
-  branch to the factory; don't change the call sites.
+  type review and report strategy engine above. The eventual NL-to-SQL feature (see
+  `_assert_readonly_select()` above) is expected to be the next one. When adding a new
+  provider, implement `LLMProvider` and add one branch to the factory; don't change the
+  call sites. (SEO metadata is no longer LLM-generated — see the SEO section below —
+  so it's not a caller here anymore.)
 
 Dataset IDs are Supabase-generated UUIDs (the `datasets.id` column), not generated
 by DuckDB or the filesystem — `dataset_id` in API responses **is** the Supabase row ID.
@@ -330,10 +331,10 @@ Tests don't hit real Supabase or real R2:
   invalidation. `FakeChartInsightsCacheTable` (same file) is the equivalent stand-in
   for the `chart_insights_cache` table.
 - LLM-calling code (`type_review.py`'s `suggest_column_categories()`,
-  `strategy_engine.py`'s `suggest_visual_strategy()`, `scripts/generate_seo.py`'s
-  `generate_metadata()`) is tested with a small in-file fake implementing
-  `LLMProvider`'s `complete()` — no real API key needed, see `tests/test_type_review.py`
-  / `test_llm_providers.py` for the pattern. `test_report_strategy_endpoint.py` goes a
+  `strategy_engine.py`'s `suggest_visual_strategy()`) is tested with a small in-file
+  fake implementing `LLMProvider`'s `complete()` — no real API key needed, see
+  `tests/test_type_review.py` / `test_llm_providers.py` for the pattern.
+  `test_report_strategy_endpoint.py` goes a
   step further and runs the fake's canned SQL against a *real* DuckDB/Parquet round
   trip (not mocked) — worth doing here specifically because the whole point of the
   feature is "is this LLM-shaped SQL actually safe and runnable," which a mocked
@@ -492,7 +493,10 @@ backend's `/api/datasets/{id}/query` endpoint, which is already wired and tested
 ## SEO
 
 Every page needs SEO metadata — this app targets organic search for "data
-intelligence", "business intelligence", "csv to charts", and "interactive charts".
+intelligence", "business intelligence", "csv to charts", "interactive charts", plus
+the export-focused terms added alongside the YouTube/white-label export features on
+the marketing page (e.g. "chart mp4 export", "animated chart export", "white label
+pdf export", "interactive dashboard export").
 
 - `src/app/layout.tsx` sets site-wide defaults (`metadataBase`, title template, OG/
   Twitter, default keywords). Route-specific pages override these.
@@ -507,9 +511,10 @@ intelligence", "business intelligence", "csv to charts", and "interactive charts
   `robots: { index: false, follow: false }` and `src/app/robots.ts` disallows them —
   crawling a page that just redirects to `/login` wastes crawl budget and looks bad.
 - `src/app/sitemap.ts` lists only the public routes (`/`, `/login`, `/signup`).
-- **When adding a new frontend page**, generate its metadata with
-  `uv run python -m scripts.generate_seo --route /new-route --description "..."` (run
-  from `backend/`) rather than hand-writing it — this calls the configured LLM
-  provider (`src/llm/client.py`) and prints a ready-to-paste `Metadata` object. Add the
-  route to `sitemap.ts` if it's public, or to `robots.ts`'s disallow list (plus
-  `noindex` metadata) if it requires auth.
+- **When adding a new frontend page, hand-write its metadata directly** (no LLM tool
+  involved — there used to be a `backend/scripts/generate_seo.py` that drafted it via
+  the configured LLM provider; it's been removed in favor of writing metadata straight
+  into the route, matching the site-wide description/keyword style already established
+  in `layout.tsx`/`page.tsx` and never claiming a feature the page doesn't actually
+  have). Add the route to `sitemap.ts` if it's public, or to `robots.ts`'s disallow
+  list (plus `noindex` metadata) if it requires auth.

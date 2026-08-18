@@ -16,7 +16,11 @@ const geistMono = Geist_Mono({
 const SITE_URL = "https://csv-data-analysis-tool-one.vercel.app";
 
 // Site-wide defaults. Route-specific overrides live in each route's layout.tsx
-// (generated with backend/scripts/generate_seo.py — see CLAUDE.md).
+// (hand-written directly per route -- see CLAUDE.md's SEO section). Keywords/
+// descriptions here target three audiences deliberately, not just "business
+// intelligence": YouTube/content creators (animated charts, video export),
+// businesses wanting data intelligence (SQL, dashboards), and users embedding
+// data analysis into presentations/PPT decks (white-labelled exports).
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
@@ -24,7 +28,8 @@ export const metadata: Metadata = {
     template: "%s — CSV Data Analysis Tool",
   },
   description:
-    "Turn any CSV into business intelligence in seconds. Upload a file, get an instant schema and row-count preview, run SQL, and build interactive charts — no data warehouse required.",
+    "Turn any CSV into business intelligence, presentation-ready charts, and animated YouTube-ready chart " +
+    "videos. Upload a file, run SQL, and export interactive line graphs and dashboards — no data warehouse required.",
   keywords: [
     "data intelligence",
     "business intelligence",
@@ -33,6 +38,10 @@ export const metadata: Metadata = {
     "csv data analysis",
     "sql query tool",
     "data visualization",
+    "youtube chart maker",
+    "animated charts for youtube",
+    "embed charts in powerpoint",
+    "presentation ready charts",
   ],
   openGraph: {
     type: "website",
@@ -40,13 +49,13 @@ export const metadata: Metadata = {
     siteName: "CSV Data Analysis Tool",
     title: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
     description:
-      "Turn any CSV into business intelligence in seconds. Upload a file, run SQL, and build interactive charts.",
+      "Turn any CSV into business intelligence, animated YouTube-ready chart videos, and presentation-ready dashboards.",
   },
   twitter: {
     card: "summary",
     title: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
     description:
-      "Turn any CSV into business intelligence in seconds. Upload a file, run SQL, and build interactive charts.",
+      "Turn any CSV into business intelligence, animated YouTube-ready chart videos, and presentation-ready dashboards.",
   },
 };
 

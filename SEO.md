@@ -1,9 +1,11 @@
 # SEO
 
-Action list for search visibility, targeting: **data intelligence**, **business
-intelligence**, **csv to charts**, **interactive charts**. See `CLAUDE.md`'s "SEO"
-section for how the implementation works (metadata pattern, robots/sitemap, the
-`generate_seo.py` tool).
+Action list for search visibility, targeting three audiences deliberately, not just
+generic BI terms: **YouTube/content creators** (animated charts, chart video export),
+**businesses** wanting **data intelligence** (**csv to charts**, **interactive
+charts**, SQL/dashboards), and users **embedding data analysis into presentations/PPT
+decks** (white-labelled chart/PDF exports). See `CLAUDE.md`'s "SEO" section for how
+the implementation works (metadata pattern, robots/sitemap).
 
 ## Done
 
@@ -18,16 +20,21 @@ section for how the implementation works (metadata pattern, robots/sitemap, the
       nothing for a crawler to see but a redirect).
 - [x] `sitemap.ts` listing the public routes.
 - [x] JSON-LD `SoftwareApplication` structured data on the marketing page.
-- [x] `backend/scripts/generate_seo.py` — LLM-drafted metadata for new pages.
+- [x] Retargeted metadata/keywords and the marketing page's copy around three
+      audiences (YouTube/content creators, businesses, PPT/presentation users) instead
+      of generic "business intelligence" alone — see the home page's `AUDIENCES`
+      section and updated `keywords` arrays in `page.tsx`/`layout.tsx`.
+- [x] ~~`backend/scripts/generate_seo.py`~~ — removed. SEO metadata is now hand-written
+      directly per route (see "To do" below) rather than LLM-drafted by a script.
 
 ## To do — recurring dev workflow
 
-- [ ] **Every time a new frontend page is added**, run
-      `uv run python -m scripts.generate_seo --route /new-route --description "..."`
-      from `backend/` and paste the result into that route's `layout.tsx` (or
-      `page.tsx` if it's a server component with no page-specific interactivity).
-      Add the route to `sitemap.ts` if public, or to `robots.ts`'s disallow list
-      (plus `noindex` metadata) if it requires auth.
+- [ ] **Every time a new frontend page is added**, write its metadata directly in
+      that route's `layout.tsx` (or `page.tsx` if it's a server component with no
+      page-specific interactivity) — match the style/keyword targeting already
+      established in `layout.tsx`/`page.tsx`, and never claim a feature the page
+      doesn't actually have. Add the route to `sitemap.ts` if public, or to
+      `robots.ts`'s disallow list (plus `noindex` metadata) if it requires auth.
 - [ ] Re-run Lighthouse / PageSpeed Insights against `/` after any change to the
       marketing page — it's the one page SEO performance actually depends on.
 
