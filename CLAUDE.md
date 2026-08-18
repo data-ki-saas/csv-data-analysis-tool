@@ -446,6 +446,18 @@ There is no top-level build/test command — the two halves are run independentl
   provider, implement `LLMProvider` and add one branch to the factory; don't change the
   call sites. (SEO metadata is no longer LLM-generated — see the SEO section below —
   so it's not a caller here anymore.)
+  - **`complete()` must never return an empty string.** Every caller feeds the result
+    straight into `json.loads()`, so a provider that silently returns `""` (e.g.
+    `AnthropicProvider` originally joined only `type == "text"` content blocks with no
+    check that any existed — a response cut off before producing text, `stop_reason=
+    "max_tokens"`, left `response.content` with no text block at all) surfaced many
+    layers away as an opaque `json.JSONDecodeError`: "Expecting value: line 1 column 1
+    (char 0)", with zero indication the LLM call itself was the actual problem. Both
+    providers now raise a `ValueError` with the real cause (Anthropic: `stop_reason`
+    + the content block types that *were* present; DeepSeek: just the empty-content
+    fact, since its failure modes are less varied) the moment they'd otherwise return
+    empty, so the error a user actually sees names the real cause instead of a
+    downstream parser's confusion.
 
 Dataset IDs are Supabase-generated UUIDs (the `datasets.id` column), not generated
 by DuckDB or the filesystem — `dataset_id` in API responses **is** the Supabase row ID.

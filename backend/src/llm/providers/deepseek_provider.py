@@ -25,4 +25,10 @@ class DeepSeekProvider(LLMProvider):
                 json={"model": self._model, "messages": messages, "max_tokens": max_tokens},
             )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        content = response.json()["choices"][0]["message"]["content"]
+        if not content:
+            # Same reasoning as AnthropicProvider's non-empty check: every caller
+            # feeds this into json.loads(), which would otherwise fail with an
+            # opaque "Expecting value" error that hides the actual problem.
+            raise ValueError("DeepSeek response had no content -- try again.")
+        return content

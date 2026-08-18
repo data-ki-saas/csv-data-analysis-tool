@@ -15,4 +15,18 @@ class AnthropicProvider(LLMProvider):
             system=system or "",
             messages=[{"role": "user", "content": prompt}],
         )
-        return "".join(block.text for block in response.content if block.type == "text")
+        text = "".join(block.text for block in response.content if block.type == "text")
+        if not text:
+            # Every caller (type review, report strategy, custom charts) feeds this
+            # straight into json.loads() -- silently returning "" here surfaces as an
+            # opaque "Expecting value: line 1 column 1 (char 0)" JSONDecodeError with
+            # no indication the LLM call itself was the problem. Raising here instead
+            # means the real cause (a response with no text content -- e.g. cut off by
+            # max_tokens before any text block was produced) reaches the user directly.
+            block_types = [block.type for block in response.content]
+            raise ValueError(
+                f"Anthropic response had no text content (stop_reason={response.stop_reason!r}, "
+                f"content block types={block_types!r}) -- try again, or raise max_tokens if this "
+                "keeps happening on larger prompts."
+            )
+        return text
