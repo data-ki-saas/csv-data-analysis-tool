@@ -12,6 +12,7 @@ class ChartShareRecord:
     owner_id: str
     token: str
     title: str
+    rationale: str
     chart_type: str
     partition_type: str
     column_name: str
@@ -33,6 +34,7 @@ def create_share(
     partition_type: str,
     column_name: str,
     result: dict,
+    rationale: str = "",
     header_snapshot: dict | None = None,
     footer_snapshot: dict | None = None,
     dataset_name: str | None = None,
@@ -43,6 +45,7 @@ def create_share(
         "owner_id": owner_id,
         "token": token,
         "title": title,
+        "rationale": rationale,
         "chart_type": chart_type,
         "partition_type": partition_type,
         "column_name": column_name,

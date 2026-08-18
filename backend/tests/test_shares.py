@@ -145,6 +145,30 @@ async def test_create_share_without_any_enabled_preset_has_no_branding_snapshot(
     assert body["footer_snapshot"] is None
 
 
+async def test_create_share_snapshots_chart_rationale(client, sample_csv_path):
+    dataset_id = await _upload(client, sample_csv_path)
+
+    response = await client.post(
+        f"/api/datasets/{dataset_id}/shares",
+        json={**_CHART_PAYLOAD, "rationale": "Only 3 distinct plan values"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["rationale"] == "Only 3 distinct plan values"
+
+    public_response = await client.get(f"/api/shares/{body['token']}")
+    assert public_response.json()["rationale"] == "Only 3 distinct plan values"
+
+
+async def test_create_share_without_rationale_defaults_to_empty_string(client, sample_csv_path):
+    dataset_id = await _upload(client, sample_csv_path)
+
+    response = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+
+    assert response.json()["rationale"] == ""
+
+
 async def test_create_share_snapshots_dataset_name_and_description(client, sample_csv_path):
     dataset_id = await _upload(client, sample_csv_path)
     await client.patch(

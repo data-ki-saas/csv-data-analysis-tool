@@ -206,6 +206,11 @@ class GenerateInsightsRequest(BaseModel):
     partition_type: str
     column: str
     result: QueryResponse
+    # Unused by the insights endpoint itself (generate_chart_insights() never
+    # reads it) -- only present because src/shares/service.py's
+    # create_chart_share() reuses this same request shape and needs the
+    # chart's subtitle to snapshot alongside its title.
+    rationale: str = ""
 
 
 class InsightsResponse(BaseModel):

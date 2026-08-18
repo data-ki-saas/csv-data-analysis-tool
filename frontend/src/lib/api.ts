@@ -265,6 +265,9 @@ export interface GenerateInsightsInput {
   partition_type: PartitionType;
   column: string;
   result: QueryResponse;
+  // Unused by generateInsights() itself -- only relevant when this same
+  // shape is reused for createChartShare() below, which snapshots it.
+  rationale?: string;
 }
 
 export async function generateInsights(datasetId: string, input: GenerateInsightsInput) {
@@ -292,6 +295,7 @@ export interface FooterPreset {
 export interface ChartShare {
   token: string;
   title: string;
+  rationale: string;
   chart_type: ChartType;
   partition_type: PartitionType;
   column: string;

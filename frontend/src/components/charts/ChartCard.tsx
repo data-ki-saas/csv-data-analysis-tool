@@ -287,6 +287,7 @@ export function ChartCard({
     createShare.mutate(
       {
         title: recommendation.title,
+        rationale: recommendation.rationale,
         chart_type: recommendation.chart_type,
         partition_type: recommendation.partition_type,
         column: recommendation.column,

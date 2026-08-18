@@ -398,12 +398,23 @@ There is no top-level build/test command — the two halves are run independentl
   - **Dataset snapshot**: `create_chart_share()` also copies the owning dataset's
     `name`/`description` onto the row (`dataset_name`/`dataset_description`, migration
     0012) for the same reason — a public visitor has no way to look the dataset up,
-    and a later rename shouldn't retroactively change a link already shared. The
-    frontend's `/share/[token]` page shows this as a small "From dataset: {name} —
-    {description}" line above the chart's own (also possibly user-edited) title.
+    and a later rename shouldn't retroactively change a link already shared.
     `_get_owned_dataset()` (renamed from `_assert_owns_dataset()`) now returns the
     record instead of just checking existence, since `create_chart_share()` needs its
     `name`/`description` fields, not just a yes/no on ownership.
+  - **Chart subtitle snapshot**: `GenerateInsightsRequest` (reused as the create-share
+    request body — see the frontend note below) gained a `rationale: str = ""` field
+    purely for this: `generate_chart_insights()` itself never reads it, it exists so
+    `create_chart_share()` can snapshot the chart's subtitle (migration 0013) alongside
+    its title, which previously had no way to reach the share row at all.
+  - **`/share/[token]/page.tsx` section order** (as requested, not arbitrary): (1) the
+    branding header — now a generic app/dataset-name fallback via
+    `renderBrandedHeaderHtml(header_snapshot, dataset_name ?? "CSV Data Analysis
+    Tool")` rather than the chart's own title, since that has its own section now; (2)
+    the dataset's name + description; (3) the chart's own title + rationale, styled
+    identically to `ChartCard`'s header row on the Visual Reports page (just without
+    the edit/reorder/delete affordances a public viewer can't use); (4) the chart
+    itself.
 - `src/settings/` — per-user UI preferences (theme mode + colour theme), stored in the
   `user_settings` table (one row per user, upserted on save). Same repository/service/
   router split and owner_id-filtered access pattern as `datasets/`. `GET /api/settings`
@@ -633,8 +644,12 @@ leaking existence of other users' datasets).
   LLM call — so returning to a dataset that's already been analyzed doesn't require
   re-clicking "Generate visual report." A dataset that's never been analyzed
   (`has_report_strategy` false) still waits for that first click, so no dataset is ever
-  auto-analyzed without the user having asked at least once. `ChartCard` dispatches on
-  `partition_type` to `TimeSeriesChart`
+  auto-analyzed without the user having asked at least once. The dataset summary block
+  at the top of the page shows `name` (semibold), `description` (italic, if set), and
+  `notes` (`line-clamp-3`'d, if set) above the row count — the same three
+  user-editable fields as the dashboard `DatasetCard`/Column Types page, just
+  read-only here (editing already lives on those other two surfaces). `ChartCard`
+  dispatches on `partition_type` to `TimeSeriesChart`
   (line/area toggle), `HistogramChart` (bars + an optional Gaussian overlay for
   `bell_curve` — see below), or `CategoricalChart` (bar/pie).
   - **Fast aggregation without another LLM round-trip**: `src/lib/chartQueries.ts`

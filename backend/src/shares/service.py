@@ -25,6 +25,7 @@ def _to_chart_share(record: repository.ChartShareRecord) -> ChartShare:
     return ChartShare(
         token=record.token,
         title=record.title,
+        rationale=record.rationale,
         chart_type=record.chart_type,
         partition_type=record.partition_type,
         column=record.column_name,
@@ -63,6 +64,7 @@ def create_chart_share(
         owner_id=user.id,
         token=token,
         title=request.title,
+        rationale=request.rationale,
         chart_type=request.chart_type,
         partition_type=request.partition_type,
         column_name=request.column,

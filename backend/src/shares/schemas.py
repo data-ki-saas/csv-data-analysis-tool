@@ -7,6 +7,7 @@ from src.settings.schemas import FooterPreset, HeaderPreset
 class ChartShare(BaseModel):
     token: str
     title: str
+    rationale: str = ""
     chart_type: str
     partition_type: str
     column: str

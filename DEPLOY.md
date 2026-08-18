@@ -56,6 +56,8 @@ Deploy in this order — each later step needs credentials from an earlier one.
    - `0012_add_dataset_snapshot_to_chart_shares.sql` — adds `dataset_name`/
      `dataset_description` text columns to `chart_shares`, snapshotted from the
      owning dataset at share-creation time.
+   - `0013_add_rationale_to_chart_shares.sql` — adds `rationale` (the chart's
+     subtitle, not-null default `''`) to `chart_shares`.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.

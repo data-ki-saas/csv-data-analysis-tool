@@ -93,20 +93,38 @@ export default function SharedChartPage() {
             isFullscreen && "justify-center p-10"
           )}
         >
+          {/* 1. Branding header -- the owner's logo/company title (or a
+              generic app fallback if no branding preset is enabled), same
+              as every other export surface. No longer doubles as the chart's
+              own title -- that has its own section below. */}
+          <div
+            className="min-w-0 break-words"
+            dangerouslySetInnerHTML={{
+              __html: renderBrandedHeaderHtml(
+                query.data.header_snapshot,
+                query.data.dataset_name ?? "CSV Data Analysis Tool"
+              ),
+            }}
+          />
+
+          {/* 2. Dataset name + description */}
           {query.data.dataset_name && (
-            <div className="text-xs opacity-60">
-              From dataset: <span className="font-medium">{query.data.dataset_name}</span>
-              {query.data.dataset_description && <> — {query.data.dataset_description}</>}
+            <div>
+              <p className="font-medium">{query.data.dataset_name}</p>
+              {query.data.dataset_description && (
+                <p className="text-sm italic opacity-80">{query.data.dataset_description}</p>
+              )}
             </div>
           )}
 
+          {/* 3. This chart's own title + subtitle -- same layout as ChartCard's
+              header row on the Visual Reports page, minus the edit affordance
+              (a public viewer can't rename someone else's chart). */}
           <div className="flex items-start justify-between gap-2">
-            <div
-              className="min-w-0 break-words font-medium"
-              dangerouslySetInnerHTML={{
-                __html: renderBrandedHeaderHtml(query.data.header_snapshot, query.data.title),
-              }}
-            />
+            <div className="min-w-0 flex-1">
+              <h2 className="break-words font-medium">{query.data.title}</h2>
+              {query.data.rationale && <p className="text-xs opacity-60">{query.data.rationale}</p>}
+            </div>
             <div className="flex shrink-0 items-center gap-2">
               <span className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
                 {PARTITION_LABELS[query.data.partition_type] ?? query.data.partition_type}
