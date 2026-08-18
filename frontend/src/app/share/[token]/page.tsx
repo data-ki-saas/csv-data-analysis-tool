@@ -109,8 +109,8 @@ export default function SharedChartPage() {
 
           {/* 2. Dataset name + description */}
           {query.data.dataset_name && (
-            <div>
-              <p className="font-medium">{query.data.dataset_name}</p>
+            <div className="text-center">
+              <p className="text-xl font-semibold">{query.data.dataset_name}</p>
               {query.data.dataset_description && (
                 <p className="text-sm italic opacity-80">{query.data.dataset_description}</p>
               )}
@@ -119,10 +119,12 @@ export default function SharedChartPage() {
 
           {/* 3. This chart's own title + subtitle -- same layout as ChartCard's
               header row on the Visual Reports page, minus the edit affordance
-              (a public viewer can't rename someone else's chart). */}
+              (a public viewer can't rename someone else's chart). Sized below
+              the dataset name above (text-lg vs text-xl) so the hierarchy reads
+              dataset name > chart title > description/subtitle. */}
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <h2 className="break-words font-medium">{query.data.title}</h2>
+              <h2 className="break-words text-lg font-medium">{query.data.title}</h2>
               {query.data.rationale && <p className="text-xs opacity-60">{query.data.rationale}</p>}
             </div>
             <div className="flex shrink-0 items-center gap-2">
