@@ -50,13 +50,19 @@ export function renderBrandedHeaderHtml(
 
 /** Renders the active footer's already-sanitized HTML, or a plain
  * `fallbackText` line when no footer preset is enabled. Wrapped in an
- * accent-coloured top border either way, matching the header's treatment. */
+ * accent-coloured top border either way (matching the header's treatment),
+ * unless `showSeparator` is false -- the public share page's own layout
+ * already separates sections without it, so it opts out to avoid a doubled
+ * divider above the footer. */
 export function renderBrandedFooterHtml(
   preset: FooterPreset | null | undefined,
-  fallbackText: string
+  fallbackText: string,
+  { showSeparator = true }: { showSeparator?: boolean } = {}
 ): string {
   const accent = currentAccentColor();
-  const wrapperStyle = `border-top:2px solid ${accent};padding-top:0.5rem;margin-top:0.5rem;`;
+  const wrapperStyle = showSeparator
+    ? `border-top:2px solid ${accent};padding-top:0.5rem;margin-top:0.5rem;`
+    : "";
   if (!preset) return `<p style="${wrapperStyle}color:${accent};">${escapeHtml(fallbackText)}</p>`;
   return `<div style="${wrapperStyle}">${preset.html}</div>`;
 }
