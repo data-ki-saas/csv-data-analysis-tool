@@ -120,6 +120,22 @@ export function HomeIcon() {
   );
 }
 
+// A folded-corner document (same silhouette as PdfIcon) with a row/column
+// grid instead of text lines -- reads as a spreadsheet/CSV file rather than
+// a generic document.
+export function CsvIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <path d="M6 2h8l4 4v16H6z" />
+      <path d="M14 2v4h4" />
+      <line x1="6" y1="11" x2="18" y2="11" />
+      <line x1="6" y1="15" x2="18" y2="15" />
+      <line x1="10" y1="8" x2="10" y2="20" />
+      <line x1="14" y1="8" x2="14" y2="20" />
+    </svg>
+  );
+}
+
 interface IconButtonProps {
   label: string;
   onClick?: () => void;

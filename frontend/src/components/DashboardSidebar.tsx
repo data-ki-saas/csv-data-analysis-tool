@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { HomeIcon } from "@/components/IconButton";
+import { CsvIcon } from "@/components/IconButton";
 import { cn } from "@/lib/utils";
 
 const GLOBAL_LINKS = [{ href: "/dashboard", label: "Datasets" }, { href: "/settings", label: "Settings" }];
@@ -38,7 +38,7 @@ export function DashboardSidebar() {
     <nav className="flex shrink-0 flex-row flex-wrap items-center gap-1 border-b border-border p-3 text-sm md:h-screen md:w-56 md:flex-col md:items-stretch md:gap-4 md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
       <Link href="/dashboard" title="CSV Data Analysis Tool" aria-label="CSV Data Analysis Tool">
         <span className="block h-7 w-7">
-          <HomeIcon />
+          <CsvIcon />
         </span>
       </Link>
 
