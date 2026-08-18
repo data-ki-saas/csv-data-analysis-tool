@@ -509,19 +509,29 @@ leaking existence of other users' datasets).
 - `/dashboard` — "Your datasets" renders one `DatasetCard`
   (`src/components/DatasetCard.tsx`) per dataset in a responsive grid (this replaced a
   plain list). Each card: an inline click-to-edit `name` (same commit-on-blur/Enter
-  pattern as the column `AliasEditor` below), a click-to-edit `description` (a
-  `<textarea maxLength={200}>` with a live character count) that falls back to an
-  *auto-generated* one-liner (`"{row_count} rows · {columns} columns · {health}%
-  health"`, computed client-side from fields the card already has — no extra request)
-  whenever the user hasn't written their own, `line-clamp-3`'d so a long description
-  still fits neatly instead of blowing out card height, row count, the existing Review
-  types/Visual reports/Presentation links, and a delete (trash icon) button. Deleting
-  confirms via `window.confirm()` (no modal library) describing exactly what cascades
-  (column types, visual reports, presentation, share links) before calling `DELETE
-  /api/datasets/{id}` — already fully handled server-side (ref-counts shared R2
-  storage from dedup, and Postgres `ON DELETE CASCADE` on `presentations` /
-  `chart_insights_cache` / `chart_shares` handles the rest), so this needed no backend
-  changes, only the frontend affordance.
+  pattern as the column `AliasEditor` below, `text-base font-semibold` to read as the
+  card's title), a click-to-edit `description` (`<textarea maxLength={200}>` with a
+  live character count, `line-clamp-3`'d so a long one still fits neatly, displayed
+  `italic` to read as a short blurb), and a click-to-edit `notes` (uncapped, same
+  control shared via `EditableTextBlock`'s `displayClassName` prop — the one thing that
+  differs between the two fields besides `maxLength` — displayed with a left accent
+  border instead of italics, reading as a longer annotation rather than a subtitle; also
+  editable from the Column Types page's Notes textarea, both going through the same
+  `useUpdateDataset` hook so either surface's edit is reflected on the other without a
+  refetch). Below those, a **read-only** filename/row-count/column-count/health-score
+  block — deliberately `font-mono` (this card's one actual font-family switch, not just
+  a weight/style change) to read as raw file data rather than authored text, visually
+  separating "things you wrote" from "things we measured" — plus the existing Review
+  types/Visual reports/Presentation links and a delete (trash icon) button. The card
+  itself has a `bg-accent` top strip and `shadow-md`/`hover:shadow-xl` for a "raised"
+  look that's tied to whichever of the 6 colour themes (`src/lib/theme.ts`) is active,
+  since `bg-accent`/`border-border`/`bg-surface` are theme CSS variables, not fixed
+  colours. Deleting confirms via `window.confirm()` (no modal library) describing
+  exactly what cascades (column types, visual reports, presentation, share links)
+  before calling `DELETE /api/datasets/{id}` — already fully handled server-side
+  (ref-counts shared R2 storage from dedup, and Postgres `ON DELETE CASCADE` on
+  `presentations` / `chart_insights_cache` / `chart_shares` handles the rest), so this
+  needed no backend changes, only the frontend affordance.
 - `/dashboard/[datasetId]/types` — the column-editing page: a category `<select>` and
   a click-to-rename alias field per column (both via `useUpdateColumn`, i.e. the
   `PATCH .../schema/columns/{name}` that can set either or both in one call), an
