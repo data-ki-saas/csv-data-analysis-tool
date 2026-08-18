@@ -542,12 +542,18 @@ leaking existence of other users' datasets).
     page, see below): a hand-rolled `contentEditable` div plus a Bold/Italic/Link/
     line-break toolbar via `document.execCommand`, not a library — the well-supported
     subset of that API this needs, not its deprecated/inconsistent corners, and not a
-    general-purpose document editor. Callers must pass `value` straight through from
-    this component's own `onChange` (never a derived/re-normalized string) and key
-    each distinct document by something stable (e.g. the preset id) rather than
-    swapping `value` under the same instance — React only skips re-writing
-    `innerHTML` (preserving cursor position) when the `dangerouslySetInnerHTML.__html`
-    string is byte-identical to what's already there.
+    general-purpose document editor. **Deliberately uncontrolled after mount**: an
+    earlier version fed `value` back in reactively via `dangerouslySetInnerHTML` on
+    every render, on the assumption that React would skip re-writing `innerHTML` when
+    the string was unchanged — that assumption didn't hold in practice, and resetting
+    the DOM node on every keystroke also resets the caret to position 0 regardless of
+    whether content actually changed, which (typed fast enough) showed up as text
+    coming out reversed. Fixed by seeding `value` into the DOM exactly once, in a
+    mount-only `useEffect([])`, and never writing it back — `onInput` still reports
+    changes upward via `onChange`, but the component's own DOM is the only source of
+    truth after mount. Callers needing to load different content into the same slot
+    must remount via `key` (e.g. the preset id), not expect a `value` prop change to
+    take effect in place.
 - `/dashboard/[datasetId]/presentation` — the multi-page drag-and-drop report builder.
   Reorder pages, reorder blocks within a page, and move a block to a different page are
   all native HTML5 drag-and-drop (`draggable` + `dataTransfer`, see

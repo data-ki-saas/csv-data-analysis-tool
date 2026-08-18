@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 interface Props {
   value: string;
@@ -16,15 +16,25 @@ interface Props {
  * (src/settings/service.py) before it's ever persisted or rendered to
  * anyone else.
  *
- * Callers must pass `value` straight through from this component's own
- * `onChange` (not a derived/re-normalized string) and give each distinct
- * document its own React `key` (e.g. the preset id) rather than swapping
- * `value` under the same instance -- React only skips re-writing `innerHTML`
- * (and so preserves cursor position) when the `dangerouslySetInnerHTML.__html`
- * string is byte-identical to what's already there; anything else resets the
- * caret to the start on every keystroke. */
+ * Deliberately uncontrolled after mount: `value` seeds the initial content
+ * once and is never written back into the DOM again, even as the parent's
+ * `onChange`-driven state updates flow back down as new `value` props.
+ * Re-applying `value` on every keystroke (e.g. via a reactive
+ * `dangerouslySetInnerHTML`) resets the DOM node and, with it, the caret --
+ * every browser puts the cursor back at position 0 after such a reset
+ * regardless of whether the content actually changed, which (typed fast
+ * enough) shows up as each new character being inserted before the last,
+ * i.e. the text comes out reversed. Callers needing to load different
+ * content must remount via `key` (e.g. the preset id) rather than expect a
+ * `value` change to take effect in place. */
 export function RichTextEditor({ value, onChange, placeholder }: Props) {
   const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current) editorRef.current.innerHTML = value;
+    // Intentionally mount-only -- see the component doc comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function exec(command: string, arg?: string) {
     editorRef.current?.focus();
@@ -80,11 +90,9 @@ export function RichTextEditor({ value, onChange, placeholder }: Props) {
       <div
         ref={editorRef}
         contentEditable
-        suppressContentEditableWarning
         onInput={(e) => onChange(e.currentTarget.innerHTML)}
         data-placeholder={placeholder}
         className="min-h-24 w-full rounded-b border border-border bg-surface p-2 text-sm empty:before:text-muted empty:before:opacity-60 empty:before:content-[attr(data-placeholder)]"
-        dangerouslySetInnerHTML={{ __html: value }}
       />
     </div>
   );
