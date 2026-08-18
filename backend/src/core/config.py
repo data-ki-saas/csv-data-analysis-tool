@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     query_max_rows: int = 10_000
     query_timeout_seconds: int = 30
 
+    # A branding-preset logo is a data URL embedded directly in the
+    # user_settings row (see src/settings/), not an R2 upload -- capped small
+    # since it's a logo, not a dataset file.
+    max_logo_size_kb: int = 200
+
     cors_origins: str = "http://localhost:3000"
 
     supabase_url: str = ""
@@ -42,6 +47,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def max_logo_size_bytes(self) -> int:
+        return self.max_logo_size_kb * 1024
 
     @property
     def cors_origin_list(self) -> list[str]:

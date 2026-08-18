@@ -327,12 +327,43 @@ There is no top-level build/test command — the two halves are run independentl
   `noindex` — it's public and reachable (unlike `/dashboard`/`/settings`, a crawler
   hitting it gets real content, not a redirect), but it's arbitrary user-generated
   content, not canonical marketing content, so it's still kept out of the index.
+  - **Branding snapshot**: `create_chart_share()` also fetches the owner's settings
+    and copies whichever header/footer preset is currently `enabled` (if any) onto
+    the new row as `header_snapshot`/`footer_snapshot` — same reasoning as the
+    chart's own `result` snapshot: the public page has no session to fetch the
+    owner's live settings with, and rebranding later shouldn't retroactively alter a
+    link already shared (see `test_share_branding_snapshot_is_frozen_at_creation_time`).
 - `src/settings/` — per-user UI preferences (theme mode + colour theme), stored in the
   `user_settings` table (one row per user, upserted on save). Same repository/service/
   router split and owner_id-filtered access pattern as `datasets/`. `GET /api/settings`
   returns built-in defaults (`system` / `winter`) when no row exists yet, rather than
   404ing — there's nothing to "not find," an unconfigured user just hasn't saved
   preferences.
+  - **Branding presets** — up to 5 header presets (`title`/`logo`/`enabled`) and 5
+    footer presets (`html`/`enabled`) per user, stored as `header_presets`/
+    `footer_presets` jsonb arrays on the same singleton row, edited via
+    `PUT /api/settings/header-presets` / `.../footer-presets` (whole-array replace,
+    same shape as `presentations.replace_presentation()` — simpler than per-item
+    CRUD for a capped, rarely-large list). "Enable/disable" means mutual exclusivity,
+    not independent toggles: `_assert_at_most_one_enabled()` (service.py) rejects a
+    request that would leave more than one preset of the same type active, since only
+    one header and one footer can actually render on a document at a time — enforced
+    server-side, not just in the UI. A logo is a data URL embedded directly in the
+    row (no R2 upload flow — logos are small), capped by `max_logo_size_kb`
+    (`src/core/config.py`, same "raw field + derived `_bytes` property" pattern as
+    `max_upload_size_mb`). Footer HTML is sanitized server-side with `nh3`
+    (`_FOOTER_ALLOWED_TAGS`/`_FOOTER_ALLOWED_ATTRIBUTES`, matching exactly what the
+    frontend's hand-rolled `RichTextEditor` can produce — no `script`/`style`/
+    `iframe`/`on*`) **before** it's ever persisted — this is the one dependency this
+    plan added on security grounds rather than avoided on "no deps for
+    presentational things" grounds: it's rendered to other people (shared links,
+    exported PDFs), not just the owner, so hand-rolled sanitization would be
+    reckless. The repository's `update_header_presets`/`update_footer_presets`
+    deliberately omit `theme_mode`/`color_theme`/the *other* presets column from
+    their upsert payload — PostgREST's upsert only `SET`s the columns present in a
+    given call's payload on conflict, so this can't clobber the independently-edited
+    fields sharing this same singleton row (verified by
+    `test_updating_header_presets_does_not_clobber_theme_or_footer_presets`).
 - `src/llm/` — provider-agnostic LLM access. `src/llm/providers/base.py` defines the
   `LLMProvider` ABC (single `complete()` method); `anthropic_provider.py` and
   `deepseek_provider.py` implement it. `src/llm/client.py`'s `get_llm_provider()` picks
@@ -489,6 +520,34 @@ leaking existence of other users' datasets).
     decision — client-side `canvas.captureStream()`/`MediaRecorder` produces WebM
     natively, not MP4, without a WASM encoder or server-side rendering, and the latter
     is a poor fit for Render's free tier per the PDF-export reasoning above.
+  - **Branding** (`src/lib/branding.ts`) — `renderBrandedHeaderHtml()`/
+    `renderBrandedFooterHtml()` are the one shared place "what does branding look
+    like" is defined, called from all five export/share surfaces: standalone HTML
+    export, the presentation builder's print-only header/footer (a `hidden
+    print:block` block, same pattern `BlockView` uses for chart rendering), the
+    per-chart PDF popup, the per-chart JPG (see below), and the public share page.
+    Both fall back to the plain title / no footer line when no preset is enabled, so
+    a user who hasn't configured branding sees no regression. Footer HTML is already
+    sanitized server-side at save time (`src/settings/service.py`) — every
+    `dangerouslySetInnerHTML` call site here is safe *because* of that, not because
+    the HTML is otherwise trusted. For the per-chart JPG specifically
+    (`exportChartImage.ts`), branding a *raster* image needs a different trick than
+    the other four (which are all real HTML documents that can just include the
+    markup directly): the chart's own SVG gets wrapped with header/footer
+    `<foreignObject>` bands inside a taller combined SVG before the existing
+    SVG→canvas rasterize step — `foreignObject` can embed real (X)HTML inside SVG,
+    which canvas can then rasterize, so this needed no new dependency (no
+    `html2canvas`) and no change to the rasterize step itself.
+  - **`src/components/RichTextEditor.tsx`** — the footer preset editor (Settings
+    page, see below): a hand-rolled `contentEditable` div plus a Bold/Italic/Link/
+    line-break toolbar via `document.execCommand`, not a library — the well-supported
+    subset of that API this needs, not its deprecated/inconsistent corners, and not a
+    general-purpose document editor. Callers must pass `value` straight through from
+    this component's own `onChange` (never a derived/re-normalized string) and key
+    each distinct document by something stable (e.g. the preset id) rather than
+    swapping `value` under the same instance — React only skips re-writing
+    `innerHTML` (preserving cursor position) when the `dangerouslySetInnerHTML.__html`
+    string is byte-identical to what's already there.
 - `/dashboard/[datasetId]/presentation` — the multi-page drag-and-drop report builder.
   Reorder pages, reorder blocks within a page, and move a block to a different page are
   all native HTML5 drag-and-drop (`draggable` + `dataTransfer`, see

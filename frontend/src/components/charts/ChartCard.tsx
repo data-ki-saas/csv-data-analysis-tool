@@ -11,6 +11,7 @@ import { printChartAsPdf } from "@/lib/exportChartPdf";
 import { useCreateChartShare, useRevokeChartShare } from "@/hooks/useChartShare";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
+import { useSettings } from "@/hooks/useSettings";
 import {
   CopyIcon,
   IconButton,
@@ -51,6 +52,9 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
   const pin = usePinBlock(datasetId);
   const createShare = useCreateChartShare(datasetId);
   const revokeShare = useRevokeChartShare(datasetId);
+  const settingsQuery = useSettings();
+  const activeHeader = settingsQuery.data?.header_presets.find((p) => p.enabled) ?? null;
+  const activeFooter = settingsQuery.data?.footer_presets.find((p) => p.enabled) ?? null;
 
   useEffect(() => {
     function handleFullscreenChange() {
@@ -143,11 +147,11 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
   }
 
   function handleDownloadJpg(currentResult: QueryResponse) {
-    downloadChartAsJpg(toChartBlock(currentResult));
+    downloadChartAsJpg(toChartBlock(currentResult), activeHeader, activeFooter);
   }
 
   function handleDownloadPdf(currentResult: QueryResponse) {
-    printChartAsPdf(toChartBlock(currentResult));
+    printChartAsPdf(toChartBlock(currentResult), activeHeader, activeFooter);
   }
 
   function handleShare(currentResult: QueryResponse) {

@@ -46,6 +46,10 @@ Deploy in this order — each later step needs credentials from an earlier one.
      per-chart-view insights cache) + RLS policies.
    - `0008_create_chart_shares.sql` — `chart_shares` table (opt-in, revocable public
      chart-share links) + RLS policies.
+   - `0009_add_branding_presets_to_user_settings.sql` — adds `header_presets`/
+     `footer_presets` jsonb arrays to `user_settings` (up to 5 each).
+   - `0010_add_branding_snapshot_to_chart_shares.sql` — adds `header_snapshot`/
+     `footer_snapshot` jsonb to `chart_shares`.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.

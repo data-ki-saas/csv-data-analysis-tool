@@ -18,6 +18,7 @@ dependencies = [
     "sqlglot>=25.30",
     "supabase>=2.10",
     "boto3>=1.35",
+    "nh3>=0.2",
 ]
 
 [dependency-groups]

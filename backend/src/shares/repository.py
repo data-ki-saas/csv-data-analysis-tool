@@ -17,6 +17,8 @@ class ChartShareRecord:
     column_name: str
     result: dict
     created_at: str
+    header_snapshot: dict | None
+    footer_snapshot: dict | None
 
 
 def create_share(
@@ -29,6 +31,8 @@ def create_share(
     partition_type: str,
     column_name: str,
     result: dict,
+    header_snapshot: dict | None = None,
+    footer_snapshot: dict | None = None,
 ) -> ChartShareRecord:
     payload = {
         "dataset_id": dataset_id,
@@ -39,6 +43,8 @@ def create_share(
         "partition_type": partition_type,
         "column_name": column_name,
         "result": result,
+        "header_snapshot": header_snapshot,
+        "footer_snapshot": footer_snapshot,
     }
     result_row = get_supabase_client().table(_TABLE).insert(payload).execute()
     return ChartShareRecord(**result_row.data[0])

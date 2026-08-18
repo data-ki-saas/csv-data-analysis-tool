@@ -198,6 +198,19 @@ export async function generateInsights(datasetId: string, input: GenerateInsight
   return handleResponse<{ insights: string[] }>(response);
 }
 
+export interface HeaderPreset {
+  id: string;
+  title: string;
+  logo: string | null;
+  enabled: boolean;
+}
+
+export interface FooterPreset {
+  id: string;
+  html: string;
+  enabled: boolean;
+}
+
 export interface ChartShare {
   token: string;
   title: string;
@@ -206,6 +219,8 @@ export interface ChartShare {
   column: string;
   result: QueryResponse;
   created_at: string;
+  header_snapshot: HeaderPreset | null;
+  footer_snapshot: FooterPreset | null;
 }
 
 // Reuses GenerateInsightsInput's shape -- the backend's create-share request
@@ -313,6 +328,8 @@ export async function pinBlock(
 export interface UserSettings {
   theme_mode: ThemeMode;
   color_theme: ColorTheme;
+  header_presets: HeaderPreset[];
+  footer_presets: FooterPreset[];
 }
 
 export async function getSettings() {
@@ -322,11 +339,29 @@ export async function getSettings() {
   return handleResponse<UserSettings>(response);
 }
 
-export async function updateSettings(settings: UserSettings) {
+export async function updateSettings(input: { theme_mode: ThemeMode; color_theme: ColorTheme }) {
   const response = await apiFetch(`${API_BASE_URL}/api/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
-    body: JSON.stringify(settings),
+    body: JSON.stringify(input),
+  });
+  return handleResponse<UserSettings>(response);
+}
+
+export async function updateHeaderPresets(presets: HeaderPreset[]) {
+  const response = await apiFetch(`${API_BASE_URL}/api/settings/header-presets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ presets }),
+  });
+  return handleResponse<UserSettings>(response);
+}
+
+export async function updateFooterPresets(presets: FooterPreset[]) {
+  const response = await apiFetch(`${API_BASE_URL}/api/settings/footer-presets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ presets }),
   });
   return handleResponse<UserSettings>(response);
 }

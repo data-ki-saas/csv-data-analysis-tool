@@ -1,4 +1,5 @@
-import type { Presentation, PresentationBlock } from "@/lib/api";
+import type { FooterPreset, HeaderPreset, Presentation, PresentationBlock } from "@/lib/api";
+import { renderBrandedFooterHtml, renderBrandedHeaderHtml } from "@/lib/branding";
 import { renderStaticChart } from "@/lib/staticChart";
 
 function escapeHtml(value: string): string {
@@ -24,8 +25,15 @@ function renderBlockHtml(block: PresentationBlock): string {
 
 /** A fully self-contained HTML document -- inline CSS, inline SVG charts, no
  * external requests and no JS framework -- so it opens correctly in any
- * browser long after this app (or the dataset) is gone. */
-export function buildStandaloneHtml(presentation: Presentation): string {
+ * browser long after this app (or the dataset) is gone. `header`/`footer`
+ * are the caller's currently-active branding presets (if any) -- falls back
+ * to the plain title / default attribution line when neither is enabled, so
+ * a user who hasn't set up branding sees no regression. */
+export function buildStandaloneHtml(
+  presentation: Presentation,
+  header?: HeaderPreset | null,
+  footer?: FooterPreset | null
+): string {
   const pagesHtml = presentation.pages
     .map(
       (page, i) =>
@@ -61,15 +69,19 @@ export function buildStandaloneHtml(presentation: Presentation): string {
 </style>
 </head>
 <body>
-<header><h1>${escapeHtml(presentation.title)}</h1></header>
+<header>${renderBrandedHeaderHtml(header, presentation.title)}</header>
 ${pagesHtml}
-<footer>Exported from CSV Data Analysis Tool</footer>
+<footer>${renderBrandedFooterHtml(footer, "Exported from CSV Data Analysis Tool")}</footer>
 </body>
 </html>`;
 }
 
-export function downloadStandaloneHtml(presentation: Presentation): void {
-  const html = buildStandaloneHtml(presentation);
+export function downloadStandaloneHtml(
+  presentation: Presentation,
+  header?: HeaderPreset | null,
+  footer?: FooterPreset | null
+): void {
+  const html = buildStandaloneHtml(presentation, header, footer);
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");

@@ -7,7 +7,9 @@ import { CategoricalChart } from "@/components/charts/CategoricalChart";
 import { HistogramChart } from "@/components/charts/HistogramChart";
 import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
 import { usePresentation, useUpdatePresentation } from "@/hooks/usePresentation";
+import { useSettings } from "@/hooks/useSettings";
 import type { PresentationBlock, PresentationPageData } from "@/lib/api";
+import { renderBrandedFooterHtml, renderBrandedHeaderHtml } from "@/lib/branding";
 import { downloadStandaloneHtml } from "@/lib/exportPresentation";
 import {
   addPage,
@@ -149,6 +151,9 @@ export default function PresentationBuilderPage() {
   const { datasetId } = useParams<{ datasetId: string }>();
   const presentationQuery = usePresentation(datasetId);
   const updatePresentation = useUpdatePresentation(datasetId);
+  const settingsQuery = useSettings();
+  const activeHeader = settingsQuery.data?.header_presets.find((p) => p.enabled) ?? null;
+  const activeFooter = settingsQuery.data?.footer_presets.find((p) => p.enabled) ?? null;
 
   // null = "no local edits yet, defer to server data" -- once the user
   // touches anything, these fork from the query result and become the
@@ -220,6 +225,20 @@ export default function PresentationBuilderPage() {
 
       {presentationQuery.isLoading && <p className="text-sm opacity-70 print:hidden">Loading…</p>}
 
+      {/* Print-only -- appears in the exported PDF (window.print() below) but
+          not in the live builder UI, same print:hidden/hidden print:block
+          pattern BlockView uses for chart rendering. */}
+      {(activeHeader || activeFooter) && (
+        <div className="hidden print:block">
+          {activeHeader && (
+            <div
+              className="text-center"
+              dangerouslySetInnerHTML={{ __html: renderBrandedHeaderHtml(activeHeader, title) }}
+            />
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <input
           value={title}
@@ -231,7 +250,13 @@ export default function PresentationBuilderPage() {
           <span className="opacity-60">{updatePresentation.isPending ? "Saving…" : hasEdits ? "Saved" : ""}</span>
           <button
             type="button"
-            onClick={() => downloadStandaloneHtml({ dataset_id: datasetId, title, pages, updated_at: null })}
+            onClick={() =>
+              downloadStandaloneHtml(
+                { dataset_id: datasetId, title, pages, updated_at: null },
+                activeHeader,
+                activeFooter
+              )
+            }
             disabled={pages.length === 0}
             className="rounded border border-border px-3 py-1.5 disabled:opacity-40"
           >
@@ -352,6 +377,13 @@ export default function PresentationBuilderPage() {
           </section>
         ))}
       </div>
+
+      {activeFooter && (
+        <div
+          className="hidden text-center print:block"
+          dangerouslySetInnerHTML={{ __html: renderBrandedFooterHtml(activeFooter, "") }}
+        />
+      )}
     </main>
   );
 }

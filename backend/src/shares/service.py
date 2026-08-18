@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from src.core.auth import CurrentUser
 from src.datasets import repository as datasets_repository
 from src.datasets.schemas import GenerateInsightsRequest
+from src.settings import repository as settings_repository
 from src.shares import repository
 from src.shares.schemas import ChartShare
 
@@ -12,6 +13,10 @@ from src.shares.schemas import ChartShare
 def _assert_owns_dataset(dataset_id: str, user: CurrentUser) -> None:
     if datasets_repository.get_dataset(dataset_id, user.id) is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+
+def _active_preset(presets: list[dict]) -> dict | None:
+    return next((p for p in presets if p.get("enabled")), None)
 
 
 def _to_chart_share(record: repository.ChartShareRecord) -> ChartShare:
@@ -23,6 +28,8 @@ def _to_chart_share(record: repository.ChartShareRecord) -> ChartShare:
         column=record.column_name,
         result=record.result,
         created_at=record.created_at,
+        header_snapshot=record.header_snapshot,
+        footer_snapshot=record.footer_snapshot,
     )
 
 
@@ -33,9 +40,19 @@ def create_chart_share(
     reasoning as generate_chart_insights() and "Pin to presentation": once
     computed, a chart's result is immutable and safe to persist, so the
     public /share/<token> page never needs to touch the dataset's Parquet,
-    R2, or SQL execution at all, only this one row."""
+    R2, or SQL execution at all, only this one row.
+
+    Also snapshots the owner's currently-active header/footer branding
+    presets (if any) for the same reason: the public page has no session to
+    fetch live settings with, and a later branding change shouldn't
+    retroactively alter links already shared."""
     _assert_owns_dataset(dataset_id, user)
     token = secrets.token_urlsafe(24)
+
+    owner_settings = settings_repository.get_settings(user.id)
+    header_snapshot = _active_preset(owner_settings.header_presets) if owner_settings else None
+    footer_snapshot = _active_preset(owner_settings.footer_presets) if owner_settings else None
+
     record = repository.create_share(
         dataset_id=dataset_id,
         owner_id=user.id,
@@ -45,6 +62,8 @@ def create_chart_share(
         partition_type=request.partition_type,
         column_name=request.column,
         result=request.result.model_dump(),
+        header_snapshot=header_snapshot,
+        footer_snapshot=footer_snapshot,
     )
     return _to_chart_share(record)
 

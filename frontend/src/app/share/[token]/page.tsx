@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { getPublicChartShare } from "@/lib/api";
+import { renderBrandedFooterHtml, renderBrandedHeaderHtml } from "@/lib/branding";
 import type { ChartFilter } from "@/lib/chartQueries";
 import { cn } from "@/lib/utils";
 import { IconButton, MaximizeIcon, MinimizeIcon } from "@/components/IconButton";
@@ -93,7 +94,12 @@ export default function SharedChartPage() {
           )}
         >
           <div className="flex items-start justify-between gap-2">
-            <h1 className="font-medium">{query.data.title}</h1>
+            <div
+              className="font-medium"
+              dangerouslySetInnerHTML={{
+                __html: renderBrandedHeaderHtml(query.data.header_snapshot, query.data.title),
+              }}
+            />
             <div className="flex shrink-0 items-center gap-2">
               <span className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
                 {PARTITION_LABELS[query.data.partition_type] ?? query.data.partition_type}
@@ -125,6 +131,13 @@ export default function SharedChartPage() {
               column={query.data.column}
               activeFilter={filter}
               onToggleFilter={handleCategoryToggle}
+            />
+          )}
+
+          {query.data.footer_snapshot && (
+            <div
+              className="border-t border-border pt-2 text-center text-xs opacity-80"
+              dangerouslySetInnerHTML={{ __html: renderBrandedFooterHtml(query.data.footer_snapshot, "") }}
             />
           )}
         </div>

@@ -146,10 +146,30 @@ def fake_datasets_table(monkeypatch):
 
 
 class FakeUserSettingsTable:
-    """In-memory stand-in for the Supabase `user_settings` table."""
+    """In-memory stand-in for the Supabase `user_settings` table. `_merge`
+    mirrors real PostgREST upsert semantics (`Prefer: resolution=merge-
+    duplicates`): only the columns present in a given call's payload are
+    written on conflict -- everything else on the row is left untouched, not
+    reset to a default. This matters here because theme/color, header
+    presets, and footer presets are all edited independently via separate
+    calls against the same singleton row."""
 
     def __init__(self):
         self.rows: dict[str, dict] = {}
+
+    def _defaults(self, owner_id: str) -> dict:
+        return {
+            "owner_id": owner_id,
+            "theme_mode": settings_repository.DEFAULT_THEME_MODE,
+            "color_theme": settings_repository.DEFAULT_COLOR_THEME,
+            "header_presets": [],
+            "footer_presets": [],
+        }
+
+    def _merge(self, owner_id: str, **fields) -> settings_repository.UserSettingsRecord:
+        row = {**self._defaults(owner_id), **self.rows.get(owner_id, {}), **fields}
+        self.rows[owner_id] = row
+        return settings_repository.UserSettingsRecord(**row)
 
     def get(self, owner_id: str) -> settings_repository.UserSettingsRecord | None:
         row = self.rows.get(owner_id)
@@ -160,9 +180,13 @@ class FakeUserSettingsTable:
     def upsert(
         self, *, owner_id: str, theme_mode: str, color_theme: str
     ) -> settings_repository.UserSettingsRecord:
-        row = {"owner_id": owner_id, "theme_mode": theme_mode, "color_theme": color_theme}
-        self.rows[owner_id] = row
-        return settings_repository.UserSettingsRecord(**row)
+        return self._merge(owner_id, theme_mode=theme_mode, color_theme=color_theme)
+
+    def update_header_presets(self, owner_id: str, presets: list[dict]) -> settings_repository.UserSettingsRecord:
+        return self._merge(owner_id, header_presets=presets)
+
+    def update_footer_presets(self, owner_id: str, presets: list[dict]) -> settings_repository.UserSettingsRecord:
+        return self._merge(owner_id, footer_presets=presets)
 
 
 @pytest.fixture(autouse=True)
@@ -170,6 +194,8 @@ def fake_user_settings_table(monkeypatch):
     table = FakeUserSettingsTable()
     monkeypatch.setattr(settings_repository, "get_settings", table.get)
     monkeypatch.setattr(settings_repository, "upsert_settings", lambda **kwargs: table.upsert(**kwargs))
+    monkeypatch.setattr(settings_repository, "update_header_presets", table.update_header_presets)
+    monkeypatch.setattr(settings_repository, "update_footer_presets", table.update_footer_presets)
     return table
 
 

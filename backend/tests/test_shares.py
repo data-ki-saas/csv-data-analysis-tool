@@ -102,3 +102,44 @@ async def test_another_owner_cannot_create_or_revoke_shares_for_a_dataset_they_d
     # The original owner's share is untouched by the other user's failed revoke attempt.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as check_client:
         assert (await check_client.get(f"/api/shares/{token}")).status_code == 200
+
+
+async def test_create_share_snapshots_active_branding_presets(client, sample_csv_path):
+    header = {"id": "h1", "title": "Acme Corp", "logo": None, "enabled": True}
+    footer = {"id": "f1", "html": "<p>123 Main St</p>", "enabled": True}
+    await client.put("/api/settings/header-presets", json={"presets": [header]})
+    await client.put("/api/settings/footer-presets", json={"presets": [footer]})
+
+    dataset_id = await _upload(client, sample_csv_path)
+    response = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+
+    body = response.json()
+    assert body["header_snapshot"] == header
+    assert body["footer_snapshot"] == footer
+
+
+async def test_share_branding_snapshot_is_frozen_at_creation_time(client, sample_csv_path):
+    header = {"id": "h1", "title": "Original Co", "logo": None, "enabled": True}
+    await client.put("/api/settings/header-presets", json={"presets": [header]})
+
+    dataset_id = await _upload(client, sample_csv_path)
+    created = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+    token = created.json()["token"]
+
+    # The owner rebrands after sharing -- the already-shared link keeps the old snapshot.
+    new_header = {"id": "h1", "title": "Rebranded Co", "logo": None, "enabled": True}
+    await client.put("/api/settings/header-presets", json={"presets": [new_header]})
+
+    public_response = await client.get(f"/api/shares/{token}")
+    assert public_response.json()["header_snapshot"]["title"] == "Original Co"
+
+
+async def test_create_share_without_any_enabled_preset_has_no_branding_snapshot(
+    client, sample_csv_path
+):
+    dataset_id = await _upload(client, sample_csv_path)
+    response = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+
+    body = response.json()
+    assert body["header_snapshot"] is None
+    assert body["footer_snapshot"] is None
