@@ -3,17 +3,27 @@
 import Link from "next/link";
 import { useRef } from "react";
 import { useUploadDataset } from "@/hooks/useUploadDataset";
-import { useDatasets } from "@/hooks/useDatasets";
+import { useDatasets, useDeleteDataset } from "@/hooks/useDatasets";
+import { IconButton, TrashIcon } from "@/components/IconButton";
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadDataset();
   const datasets = useDatasets();
+  const deleteDataset = useDeleteDataset();
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) upload.mutate(file);
+  }
+
+  function handleDelete(datasetId: string, filename: string) {
+    const confirmed = window.confirm(
+      `Delete "${filename}"? This removes the uploaded file along with its column types, ` +
+        `visual reports, presentation, and any share links -- this can't be undone.`
+    );
+    if (confirmed) deleteDataset.mutate(datasetId);
   }
 
   return (
@@ -81,6 +91,11 @@ export default function DashboardPage() {
         {datasets.data?.length === 0 && (
           <p className="text-sm opacity-70">No datasets uploaded yet.</p>
         )}
+        {deleteDataset.isError && (
+          <p className="text-sm text-red-600">
+            Couldn&apos;t delete that dataset: {(deleteDataset.error as Error).message}
+          </p>
+        )}
         <ul className="flex flex-col gap-2">
           {datasets.data?.map((dataset) => (
             <li
@@ -99,6 +114,17 @@ export default function DashboardPage() {
                 <Link href={`/dashboard/${dataset.dataset_id}/presentation`} className="underline">
                   Presentation
                 </Link>
+                <IconButton
+                  label={
+                    deleteDataset.isPending && deleteDataset.variables === dataset.dataset_id
+                      ? "Deleting…"
+                      : "Delete dataset"
+                  }
+                  onClick={() => handleDelete(dataset.dataset_id, dataset.filename)}
+                  disabled={deleteDataset.isPending && deleteDataset.variables === dataset.dataset_id}
+                >
+                  <TrashIcon />
+                </IconButton>
               </div>
             </li>
           ))}

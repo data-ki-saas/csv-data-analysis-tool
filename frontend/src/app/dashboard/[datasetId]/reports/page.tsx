@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChartCard } from "@/components/charts/ChartCard";
 import { useDatasetSchema } from "@/hooks/useDatasetSchema";
 import { useReportStrategy } from "@/hooks/useReportStrategy";
@@ -15,6 +15,19 @@ export default function ReportsPage() {
   const [filter, setFilter] = useState<ChartFilter | null>(null);
 
   const recommendations = strategy.data?.recommendations ?? [];
+
+  // A report already generated on a previous visit is cached server-side
+  // (report_strategy on the datasets row) -- force=false below is a free
+  // cache hit, no LLM call. Only auto-load when has_report_strategy says a
+  // report already exists; a dataset that's never been analyzed still waits
+  // for an explicit "Generate visual report" click (see useReportStrategy /
+  // strategy.isIdle guard: this only ever fires once per mount).
+  useEffect(() => {
+    if (schema.data?.has_report_strategy && strategy.isIdle) {
+      strategy.mutate(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schema.data?.has_report_strategy]);
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-12">
@@ -62,11 +75,16 @@ export default function ReportsPage() {
         </p>
       )}
 
-      {!strategy.isPending && recommendations.length === 0 && !strategy.isError && strategy.isIdle && (
-        <p className="py-10 text-center text-sm opacity-60">
-          No report yet — click &quot;Generate visual report&quot; to get AI-recommended charts for this dataset.
-        </p>
-      )}
+      {!strategy.isPending &&
+        recommendations.length === 0 &&
+        !strategy.isError &&
+        strategy.isIdle &&
+        schema.data &&
+        !schema.data.has_report_strategy && (
+          <p className="py-10 text-center text-sm opacity-60">
+            No report yet — click &quot;Generate visual report&quot; to get AI-recommended charts for this dataset.
+          </p>
+        )}
 
       {!strategy.isPending && strategy.isSuccess && recommendations.length === 0 && (
         <p className="py-10 text-center text-sm opacity-60">

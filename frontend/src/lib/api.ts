@@ -62,6 +62,17 @@ export async function listDatasets() {
   return handleResponse<DatasetInfo[]>(response);
 }
 
+export async function deleteDataset(datasetId: string) {
+  const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}`, {
+    method: "DELETE",
+    headers: await authHeader(),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Request failed (HTTP ${response.status})`);
+  }
+}
+
 export async function queryDataset(datasetId: string, sql: string) {
   const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}/query`, {
     method: "POST",
@@ -110,6 +121,7 @@ export interface DatasetSchema {
   health_score: number;
   columns: ColumnInfo[];
   preview: { columns: string[]; rows: unknown[][] };
+  has_report_strategy: boolean;
 }
 
 export async function getDatasetSchema(datasetId: string) {

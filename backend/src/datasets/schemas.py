@@ -60,6 +60,12 @@ class DatasetSchemaResponse(BaseModel):
     health_score: float
     columns: list[ColumnInfo]
     preview: DatasetPreview
+    # True once a report strategy has been generated at least once (even if
+    # it found nothing chartable -- see generate_report_strategy's `[]` vs
+    # `None` distinction). Lets the reports page auto-load an already
+    # -generated report on open without ever auto-triggering a first-time
+    # LLM call for a dataset that was never analyzed.
+    has_report_strategy: bool = False
 
 
 class ReviewColumnsRequest(BaseModel):

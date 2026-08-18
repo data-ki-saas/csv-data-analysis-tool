@@ -283,6 +283,7 @@ def _to_schema_response(
         health_score=record.health_score,
         columns=[ColumnInfo(**col) for col in record.schema],
         preview=DatasetPreview(columns=preview.columns, rows=preview.rows),
+        has_report_strategy=record.report_strategy is not None,
     )
 
 
