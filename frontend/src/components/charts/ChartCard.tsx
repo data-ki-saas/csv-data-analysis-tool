@@ -11,8 +11,11 @@ import { printChartAsPdf } from "@/lib/exportChartPdf";
 import { useCreateChartShare, useRevokeChartShare } from "@/hooks/useChartShare";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
+import { useUpdateChart } from "@/hooks/useReportStrategy";
 import { useSettings } from "@/hooks/useSettings";
 import {
+  ArrowDownIcon,
+  ArrowUpIcon,
   CopyIcon,
   IconButton,
   InsightsIcon,
@@ -23,6 +26,7 @@ import {
   PinIcon,
   RevokeIcon,
   ShareIcon,
+  TrashIcon,
 } from "@/components/IconButton";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { HistogramChart } from "./HistogramChart";
@@ -34,14 +38,138 @@ const PARTITION_LABELS: Record<string, string> = {
   categorical: "Categorical",
 };
 
+function TitleEditor({
+  value,
+  onSave,
+  disabled,
+}: {
+  value: string;
+  onSave: (value: string) => void;
+  disabled: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== value) onSave(trimmed);
+    else setDraft(value);
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to edit title"
+        className="w-full break-words text-left font-medium underline decoration-dotted underline-offset-2"
+      >
+        {value}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === "Escape") {
+          setDraft(value);
+          setEditing(false);
+        }
+      }}
+      className="w-full rounded border border-border bg-surface px-1 py-0.5 font-medium"
+    />
+  );
+}
+
+function RationaleEditor({
+  value,
+  onSave,
+  disabled,
+}: {
+  value: string;
+  onSave: (value: string) => void;
+  disabled: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  function commit() {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed !== value) onSave(trimmed);
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        title="Click to edit subtitle"
+        className="text-left text-xs opacity-60 hover:opacity-90"
+      >
+        {value || <span className="italic">Add a subtitle…</span>}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === "Escape") {
+          setDraft(value);
+          setEditing(false);
+        }
+      }}
+      className="w-full rounded border border-border bg-surface px-1 py-0.5 text-xs"
+    />
+  );
+}
+
 interface Props {
   datasetId: string;
   recommendation: ChartRecommendation;
   filter: ChartFilter | null;
   onFilterChange: (filter: ChartFilter | null) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onDelete: () => void;
+  deleting: boolean;
 }
 
-export function ChartCard({ datasetId, recommendation, filter, onFilterChange }: Props) {
+export function ChartCard({
+  datasetId,
+  recommendation,
+  filter,
+  onFilterChange,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
+  onDelete,
+  deleting,
+}: Props) {
   const [binCount, setBinCount] = useState<number | null>(null);
   const [insights, setInsights] = useState<string[] | null>(null);
   const [share, setShare] = useState<ChartShare | null>(null);
@@ -52,6 +180,7 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
   const pin = usePinBlock(datasetId);
   const createShare = useCreateChartShare(datasetId);
   const revokeShare = useRevokeChartShare(datasetId);
+  const updateChart = useUpdateChart(datasetId);
   const settingsQuery = useSettings();
   const activeHeader = settingsQuery.data?.header_presets.find((p) => p.enabled) ?? null;
   const activeFooter = settingsQuery.data?.footer_presets.find((p) => p.enabled) ?? null;
@@ -203,14 +332,28 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="break-words font-medium">{recommendation.title}</h3>
-          {recommendation.rationale && <p className="text-xs opacity-60">{recommendation.rationale}</p>}
+        <div className="min-w-0 flex-1">
+          <TitleEditor
+            value={recommendation.title}
+            disabled={updateChart.isPending}
+            onSave={(title) => updateChart.mutate({ chartId: recommendation.id, title })}
+          />
+          <RationaleEditor
+            value={recommendation.rationale}
+            disabled={updateChart.isPending}
+            onSave={(rationale) => updateChart.mutate({ chartId: recommendation.id, rationale })}
+          />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
             {PARTITION_LABELS[recommendation.partition_type] ?? recommendation.partition_type}
           </span>
+          <IconButton label="Move up" onClick={onMoveUp} disabled={!canMoveUp}>
+            <ArrowUpIcon />
+          </IconButton>
+          <IconButton label="Move down" onClick={onMoveDown} disabled={!canMoveDown}>
+            <ArrowDownIcon />
+          </IconButton>
           <IconButton
             label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
             onClick={handleToggleFullscreen}
@@ -219,10 +362,22 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
           </IconButton>
         </div>
       </div>
+      {updateChart.isError && (
+        <p className="text-xs text-red-600">
+          Couldn&apos;t save that change: {(updateChart.error as Error).message}
+        </p>
+      )}
 
       {loading && <p className="py-10 text-center text-sm opacity-60">Updating…</p>}
       {!loading && error && (
-        <p className="py-10 text-center text-sm text-red-600">Couldn&apos;t render this chart: {error}</p>
+        <>
+          <p className="py-10 text-center text-sm text-red-600">Couldn&apos;t render this chart: {error}</p>
+          <div className="flex items-center justify-end border-t border-border pt-2">
+            <IconButton label={deleting ? "Deleting…" : "Delete chart"} onClick={onDelete} disabled={deleting}>
+              <TrashIcon />
+            </IconButton>
+          </div>
+        </>
       )}
       {!loading && !error && result && (
         <>
@@ -268,49 +423,54 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-1 border-t border-border pt-2">
-            <IconButton
-              label={generateInsights.isPending ? "Generating…" : insights ? "Regenerate insights" : "Generate insights"}
-              onClick={() => handleGenerateInsights(result)}
-              disabled={generateInsights.isPending}
-            >
-              <InsightsIcon />
-            </IconButton>
-            <IconButton
-              label={pin.isPending ? "Pinning…" : pin.isSuccess ? "Pinned" : "Pin to presentation"}
-              onClick={() => handlePin(result)}
-              disabled={pin.isPending}
-            >
-              <PinIcon />
-            </IconButton>
-            <IconButton label="Download JPG" onClick={() => handleDownloadJpg(result)}>
-              <JpgIcon />
-            </IconButton>
-            <IconButton label="Download PDF" onClick={() => handleDownloadPdf(result)}>
-              <PdfIcon />
-            </IconButton>
-            {!share ? (
+          <div className="flex flex-wrap items-center justify-between gap-1 border-t border-border pt-2">
+            <div className="flex flex-wrap items-center gap-1">
               <IconButton
-                label={createShare.isPending ? "Creating link…" : "Share"}
-                onClick={() => handleShare(result)}
-                disabled={createShare.isPending}
+                label={generateInsights.isPending ? "Generating…" : insights ? "Regenerate insights" : "Generate insights"}
+                onClick={() => handleGenerateInsights(result)}
+                disabled={generateInsights.isPending}
               >
-                <ShareIcon />
+                <InsightsIcon />
               </IconButton>
-            ) : (
-              <>
-                <IconButton label="Copy share link" onClick={handleCopyShareLink}>
-                  <CopyIcon />
-                </IconButton>
+              <IconButton
+                label={pin.isPending ? "Pinning…" : pin.isSuccess ? "Pinned" : "Pin to presentation"}
+                onClick={() => handlePin(result)}
+                disabled={pin.isPending}
+              >
+                <PinIcon />
+              </IconButton>
+              <IconButton label="Download JPG" onClick={() => handleDownloadJpg(result)}>
+                <JpgIcon />
+              </IconButton>
+              <IconButton label="Download PDF" onClick={() => handleDownloadPdf(result)}>
+                <PdfIcon />
+              </IconButton>
+              {!share ? (
                 <IconButton
-                  label={revokeShare.isPending ? "Revoking…" : "Revoke share link"}
-                  onClick={handleRevokeShare}
-                  disabled={revokeShare.isPending}
+                  label={createShare.isPending ? "Creating link…" : "Share"}
+                  onClick={() => handleShare(result)}
+                  disabled={createShare.isPending}
                 >
-                  <RevokeIcon />
+                  <ShareIcon />
                 </IconButton>
-              </>
-            )}
+              ) : (
+                <>
+                  <IconButton label="Copy share link" onClick={handleCopyShareLink}>
+                    <CopyIcon />
+                  </IconButton>
+                  <IconButton
+                    label={revokeShare.isPending ? "Revoking…" : "Revoke share link"}
+                    onClick={handleRevokeShare}
+                    disabled={revokeShare.isPending}
+                  >
+                    <RevokeIcon />
+                  </IconButton>
+                </>
+              )}
+            </div>
+            <IconButton label={deleting ? "Deleting…" : "Delete chart"} onClick={onDelete} disabled={deleting}>
+              <TrashIcon />
+            </IconButton>
           </div>
         </>
       )}

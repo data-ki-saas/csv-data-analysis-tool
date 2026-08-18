@@ -270,6 +270,53 @@ There is no top-level build/test command — the two halves are run independentl
     as unsafe. This affected the human-facing `/query` endpoint too, just rarely enough
     in practice to not have been hit — LLM-generated SQL fails to parse far more often
     than hand-typed SQL does. Now caught and converted to `UnsafeQueryError`.
+  - **Custom charts, delete, reorder, and editable labels** — a chart recommendation is
+    no longer purely a batch-generated, read-only artifact:
+    - `ChartRecommendation.id` (server-assigned uuid4 hex, never by the LLM) lets one
+      chart be addressed individually for delete/reorder/edit. Recommendations
+      persisted before this field existed won't have one — `service._with_ids()`
+      backfills and **persists** the backfilled ids the first time they're loaded
+      (not just returns them with a fresh id generated on every read), since
+      delete-by-id/reorder-by-id only work if the id the frontend is holding still
+      matches what's in the database on the next request.
+    - `ChartRecommendation.source` (`"auto"` default vs. `"custom"`) distinguishes a
+      chart from the whole-dataset LLM strategy pass from one added via `POST
+      .../report-strategy/custom` (`service.add_custom_chart()`,
+      `strategy_engine.suggest_custom_chart()`) for a free-text request like "show me
+      distribution of annual income city wise" — this needed its own system prompt
+      (`CUSTOM_CHART_SYSTEM_PROMPT`) since a request like "X by Y" is a GROUP BY +
+      aggregate (dimension column Y, measure column X), not a single-column
+      distribution like the main prompt's shape; `column` is set to the GROUP BY
+      *dimension*, since that's what cross-chart filtering keys off. This "just
+      works" against the existing `CategoricalChart`/`TimeSeriesChart` renderers
+      with zero frontend changes: `findColumn()` (`chartData.ts`) already falls back
+      positionally to `result.columns[0]`/`[1]` when it doesn't find columns literally
+      named `"category"`/`"count"`, so a 2-column `(dimension, aggregate)` result
+      renders correctly regardless of its actual column names.
+      `generate_report_strategy(force=True)` ("Regenerate report") only
+      recomputes/replaces `source="auto"` entries — `source="custom"` ones are
+      carried forward untouched, since a whole-dataset strategy re-pass has no
+      opinion on a chart the user asked for directly. (A **deleted** `auto` chart can
+      reappear on a later regenerate, though, since regenerate is a full recompute of
+      the auto set with no memory of prior per-chart deletions — an accepted
+      tradeoff, not a bug, for the added complexity of tracking that.)
+    - `DELETE .../report-strategy/{chart_id}` (`service.remove_chart()`) removes one
+      chart regardless of its `source` — an auto-generated chart that turned out
+      useless is just as deletable as a custom one.
+    - `PUT .../report-strategy/order` (`service.reorder_charts()`) takes the full,
+      reordered list of chart ids and replaces the persisted array with that order —
+      a whole-array replace like `presentations`/branding presets elsewhere in this
+      codebase, not a granular "move to index N" endpoint, since the frontend already
+      holds the full list to reorder locally (swap two adjacent entries) before
+      persisting. Rejects (400) a `chart_ids` set that doesn't exactly match the
+      dataset's current chart ids, rather than silently dropping/ignoring extras,
+      since a mismatch means the client's copy is stale.
+    - `PATCH .../report-strategy/{chart_id}` (`service.update_chart()`,
+      `UpdateChartRequest`) edits only `title`/`rationale` — never `sql` or re-runs
+      the query, it's purely a label edit. Same `exclude_unset=True` tri-state
+      pattern as `update_dataset_metadata()` for description/notes: an explicit
+      `rationale: ""` clears it, an omitted field leaves it alone, `title` can never
+      be blank.
 - **Insights Generator** (`src/datasets/insights.py`) — `POST /api/datasets/{id}/insights`
   (`service.generate_chart_insights()`) takes a chart's already-aggregated `{columns,
   rows}` data straight from the request body (the frontend already has it, whether from
@@ -348,6 +395,15 @@ There is no top-level build/test command — the two halves are run independentl
     chart's own `result` snapshot: the public page has no session to fetch the
     owner's live settings with, and rebranding later shouldn't retroactively alter a
     link already shared (see `test_share_branding_snapshot_is_frozen_at_creation_time`).
+  - **Dataset snapshot**: `create_chart_share()` also copies the owning dataset's
+    `name`/`description` onto the row (`dataset_name`/`dataset_description`, migration
+    0012) for the same reason — a public visitor has no way to look the dataset up,
+    and a later rename shouldn't retroactively change a link already shared. The
+    frontend's `/share/[token]` page shows this as a small "From dataset: {name} —
+    {description}" line above the chart's own (also possibly user-edited) title.
+    `_get_owned_dataset()` (renamed from `_assert_owns_dataset()`) now returns the
+    record instead of just checking existence, since `create_chart_share()` needs its
+    `name`/`description` fields, not just a yes/no on ownership.
 - `src/settings/` — per-user UI preferences (theme mode + colour theme), stored in the
   `user_settings` table (one row per user, upserted on save). Same repository/service/
   router split and owner_id-filtered access pattern as `datasets/`. `GET /api/settings`
@@ -622,6 +678,30 @@ leaking existence of other users' datasets).
     decision — client-side `canvas.captureStream()`/`MediaRecorder` produces WebM
     natively, not MP4, without a WASM encoder or server-side rendering, and the latter
     is a poor fit for Render's free tier per the PDF-export reasoning above.
+  - **Custom charts, delete, and reorder on the reports page** — a text input above
+    the chart grid (`useAddCustomChart`) sends a free-text request straight to `POST
+    .../report-strategy/custom` and appends the returned chart to the
+    `["reportStrategy", datasetId]` query cache (`appendChart()` in
+    `useReportStrategy.ts`) — no refetch needed, and it works even before the
+    auto-report has ever been generated (the mutation cache starts from an empty
+    `ReportStrategy` shell in that case). Each `ChartCard` gets Up/Down `IconButton`s
+    (`useReorderCharts`) next to the existing fullscreen toggle — `ReportsPage.
+    handleMove()` swaps two adjacent entries in the already-loaded array client-side
+    and PUTs the full id order, same optimistic-then-persist shape as the rest of
+    this codebase's small-list reordering. A Delete `IconButton` (`useDeleteChart`)
+    sits on the *right* end of the existing (left-aligned) action row — deliberately
+    kept reachable even when a chart's SQL failed (a broken chart has no `result`, so
+    it never reaches that action row at all; the error-state branch renders its own
+    copy of just the delete button) since a broken chart is exactly the kind of
+    "useless" chart this button exists to remove.
+  - **Editable chart title/subtitle** — `TitleEditor`/`RationaleEditor` (local to
+    `ChartCard.tsx`) are the same click-to-edit-commit-on-blur pattern as
+    `AliasEditor`/`DatasetCard`'s `NameEditor`, wired to `useUpdateChart` (`PATCH
+    .../report-strategy/{chart_id}`). Editing never touches `sql` or re-runs the
+    query — it's a label-only edit — and because `handleShare()` already reads
+    `recommendation.title` fresh at share-click time, a renamed chart's edited title
+    (not the original LLM-generated one) is what actually gets snapshotted into a
+    share link created afterward, with no separate wiring needed.
   - **Branding** (`src/lib/branding.ts`) — `renderBrandedHeaderHtml()`/
     `renderBrandedFooterHtml()` are the one shared place "what does branding look
     like" is defined, called from all five export/share surfaces: standalone HTML
@@ -629,7 +709,17 @@ leaking existence of other users' datasets).
     print:block` block, same pattern `BlockView` uses for chart rendering), the
     per-chart PDF popup, the per-chart JPG (see below), and the public share page.
     Both fall back to the plain title / no footer line when no preset is enabled, so
-    a user who hasn't configured branding sees no regression. Footer HTML is already
+    a user who hasn't configured branding sees no regression. Both are also rendered
+    in the active colour theme's accent colour (a coloured underline under the
+    header, a matching top border above the footer) via `currentAccentColor()`,
+    which reads `getComputedStyle(document.documentElement).getPropertyValue
+    ("--color-accent")` on the *live* page and inlines the resolved literal colour —
+    these are all standalone documents (a downloaded HTML file, a popup window, a
+    rasterized image) that never load this app's `globals.css`, so a `var(--color-
+    accent)` reference in the generated markup wouldn't resolve to anything once
+    rendered outside the app; reading it from the page that's still open (where the
+    variable *is* defined) and baking in the literal value is what makes the accent
+    colour actually survive into the exported/shared document. Footer HTML is already
     sanitized server-side at save time (`src/settings/service.py`) — every
     `dangerouslySetInnerHTML` call site here is safe *because* of that, not because
     the HTML is otherwise trusted. For the per-chart JPG specifically

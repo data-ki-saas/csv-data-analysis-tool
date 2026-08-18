@@ -18,3 +18,8 @@ class ChartShare(BaseModel):
     # alter links already shared.
     header_snapshot: HeaderPreset | None = None
     footer_snapshot: FooterPreset | None = None
+    # Snapshotted from the dataset at share-creation time, same reasoning --
+    # a later rename/description edit shouldn't retroactively change a link
+    # already shared.
+    dataset_name: str | None = None
+    dataset_description: str | None = None

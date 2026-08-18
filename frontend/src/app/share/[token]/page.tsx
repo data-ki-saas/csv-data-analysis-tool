@@ -93,6 +93,13 @@ export default function SharedChartPage() {
             isFullscreen && "justify-center p-10"
           )}
         >
+          {query.data.dataset_name && (
+            <div className="text-xs opacity-60">
+              From dataset: <span className="font-medium">{query.data.dataset_name}</span>
+              {query.data.dataset_description && <> — {query.data.dataset_description}</>}
+            </div>
+          )}
+
           <div className="flex items-start justify-between gap-2">
             <div
               className="min-w-0 break-words font-medium"

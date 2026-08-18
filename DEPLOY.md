@@ -53,6 +53,9 @@ Deploy in this order — each later step needs credentials from an earlier one.
    - `0011_add_name_and_description_to_datasets.sql` — adds user-editable `name`
      (backfilled from `filename`, then made `not null`), `description` (≤200 chars,
      check constraint), and `notes` (uncapped) to `datasets`.
+   - `0012_add_dataset_snapshot_to_chart_shares.sql` — adds `dataset_name`/
+     `dataset_description` text columns to `chart_shares`, snapshotted from the
+     owning dataset at share-creation time.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.

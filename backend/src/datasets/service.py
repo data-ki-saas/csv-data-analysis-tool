@@ -24,10 +24,11 @@ from src.datasets.schemas import (
     GenerateInsightsRequest,
     InsightsResponse,
     ReportStrategyResponse,
+    UpdateChartRequest,
     UpdateDatasetRequest,
     UploadResponse,
 )
-from src.datasets.strategy_engine import suggest_visual_strategy
+from src.datasets.strategy_engine import suggest_custom_chart, suggest_visual_strategy
 from src.datasets.type_review import suggest_column_categories
 from src.llm.client import get_llm_provider
 from src.query.schemas import QueryResponse
@@ -476,6 +477,51 @@ async def update_column(
     return _to_schema_response(updated_record, preview)
 
 
+async def _build_chartable_payload(record: repository.DatasetRecord) -> list[dict]:
+    """Column payload for the LLM strategist -- shared by
+    generate_report_strategy and add_custom_chart. Free-text columns are
+    excluded before the prompt is even built -- there's no meaningful
+    aggregate chart for a comments/description column."""
+    columns = [ColumnInfo(**col) for col in record.schema]
+    chartable = [col for col in columns if col.category != "free_text"]
+    if not chartable:
+        return []
+
+    preview = await duckdb_manager.preview_dataset(record.parquet_key)
+    samples = _sample_values(preview)
+    return [
+        {
+            "name": col.name,
+            "alias": col.alias,
+            "type": col.type,
+            "category": col.category,
+            "distinct_count": col.distinct_count,
+            "null_percentage": col.null_percentage,
+            "samples": samples.get(col.name, []),
+        }
+        for col in chartable
+    ]
+
+
+def _with_ids(raw: list[dict]) -> tuple[list[dict], bool]:
+    """Recommendations persisted before ChartRecommendation gained `id`
+    won't have one -- backfill deterministically on first load after this
+    feature shipped. Returns (possibly-updated list, whether anything
+    changed) so the caller only re-persists when it actually needed to.
+    Every call site that reads `report_strategy` for delete/reorder/cache-hit
+    purposes goes through this, so ids are stable across requests once
+    backfilled -- required for delete-by-id and reorder-by-id to keep
+    matching the same entries the frontend is holding."""
+    changed = False
+    result = []
+    for r in raw:
+        if not r.get("id"):
+            r = {**r, "id": uuid.uuid4().hex}
+            changed = True
+        result.append(r)
+    return result, changed
+
+
 async def generate_report_strategy(
     dataset_id: str, force: bool, user: CurrentUser
 ) -> ReportStrategyResponse:
@@ -506,43 +552,39 @@ async def generate_report_strategy(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     if not force and record.report_strategy is not None:
-        cached_recommendations = [ChartRecommendation(**r) for r in record.report_strategy]
+        raw, changed = _with_ids(record.report_strategy)
+        if changed:
+            repository.update_dataset_report_strategy(dataset_id, user.id, raw)
+        cached_recommendations = [ChartRecommendation(**r) for r in raw]
         return ReportStrategyResponse(
             dataset_id=record.id, filename=record.filename, recommendations=cached_recommendations
         )
 
-    columns = [ColumnInfo(**col) for col in record.schema]
-    chartable = [col for col in columns if col.category != "free_text"]
+    # Regenerating (force=True, or nothing cached yet): only the "auto" set
+    # is recomputed/replaced below -- any "custom" charts the user added via
+    # add_custom_chart() aren't part of this whole-dataset strategy pass, so
+    # they're carried forward untouched rather than wiped by a regenerate.
+    existing, _ = _with_ids(record.report_strategy or [])
+    custom_charts = [r for r in existing if r.get("source") == "custom"]
 
-    if not chartable:
+    payload = await _build_chartable_payload(record)
+
+    if not payload:
         # Persisted explicitly (not just returned) so `report_strategy` reads
-        # as "generated, nothing chartable" ('[]') rather than looking
-        # identical to "never generated" (NULL) on the next cache check.
-        repository.update_dataset_report_strategy(dataset_id, user.id, [])
-        return ReportStrategyResponse(dataset_id=record.id, filename=record.filename, recommendations=[])
-
-    preview = await duckdb_manager.preview_dataset(record.parquet_key)
-    samples = _sample_values(preview)
-
-    payload = [
-        {
-            "name": col.name,
-            "alias": col.alias,
-            "type": col.type,
-            "category": col.category,
-            "distinct_count": col.distinct_count,
-            "null_percentage": col.null_percentage,
-            "samples": samples.get(col.name, []),
-        }
-        for col in chartable
-    ]
+        # as "generated, nothing chartable" rather than looking identical to
+        # "never generated" (NULL) on the next cache check.
+        repository.update_dataset_report_strategy(dataset_id, user.id, custom_charts)
+        recommendations = [ChartRecommendation(**r) for r in custom_charts]
+        return ReportStrategyResponse(
+            dataset_id=record.id, filename=record.filename, recommendations=recommendations
+        )
 
     try:
         suggestions = await suggest_visual_strategy(payload, get_llm_provider())
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Report strategy generation failed: {exc}") from exc
 
-    recommendations = []
+    auto_recommendations = []
     for suggestion in suggestions:
         result = None
         error = None
@@ -557,8 +599,10 @@ async def generate_report_strategy(
         except (UnsafeQueryError, duckdb.Error) as exc:
             error = str(exc)
 
-        recommendations.append(
+        auto_recommendations.append(
             ChartRecommendation(
+                id=uuid.uuid4().hex,
+                source="auto",
                 column=suggestion["column"],
                 partition_type=suggestion["partition_type"],
                 chart_type=suggestion["chart_type"],
@@ -570,10 +614,148 @@ async def generate_report_strategy(
             )
         )
 
+    recommendations = auto_recommendations + [ChartRecommendation(**r) for r in custom_charts]
     repository.update_dataset_report_strategy(
         dataset_id, user.id, [r.model_dump(mode="json") for r in recommendations]
     )
 
+    return ReportStrategyResponse(
+        dataset_id=record.id, filename=record.filename, recommendations=recommendations
+    )
+
+
+async def add_custom_chart(dataset_id: str, prompt: str, user: CurrentUser) -> ChartRecommendation:
+    """Adds one LLM-generated chart matching a user's free-text request
+    (e.g. "distribution of annual income city wise") to the dataset's
+    existing report -- reuses the same column payload and SQL-safety guard
+    as generate_report_strategy, but asks for exactly one recommendation
+    instead of a full strategy, and appends rather than replaces the
+    persisted `report_strategy` cache."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    payload = await _build_chartable_payload(record)
+    if not payload:
+        raise HTTPException(status_code=400, detail="This dataset has no chartable columns")
+
+    try:
+        suggestion = await suggest_custom_chart(prompt, payload, get_llm_provider())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Couldn't generate that chart: {exc}") from exc
+
+    result = None
+    error = None
+    try:
+        query_result = await duckdb_manager.execute_query(record.parquet_key, suggestion["sql"])
+        result = QueryResponse(
+            columns=query_result.columns,
+            rows=query_result.rows,
+            row_count=query_result.row_count,
+            truncated=query_result.truncated,
+        )
+    except (UnsafeQueryError, duckdb.Error) as exc:
+        error = str(exc)
+
+    new_chart = ChartRecommendation(
+        id=uuid.uuid4().hex,
+        source="custom",
+        column=suggestion["column"],
+        partition_type=suggestion["partition_type"],
+        chart_type=suggestion["chart_type"],
+        title=suggestion["title"],
+        rationale=suggestion["rationale"],
+        sql=suggestion["sql"],
+        result=result,
+        error=error,
+    )
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    repository.update_dataset_report_strategy(
+        dataset_id, user.id, existing + [new_chart.model_dump(mode="json")]
+    )
+
+    return new_chart
+
+
+def remove_chart(dataset_id: str, chart_id: str, user: CurrentUser) -> ReportStrategyResponse:
+    """Deletes one chart (e.g. one the auto-generated report or a custom
+    request produced that turned out useless) from the dataset's persisted
+    report_strategy. Charts predating the `id` field are backfilled first
+    (see _with_ids) so this can still match them."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    remaining = [r for r in existing if r["id"] != chart_id]
+    if len(remaining) == len(existing):
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    repository.update_dataset_report_strategy(dataset_id, user.id, remaining)
+    recommendations = [ChartRecommendation(**r) for r in remaining]
+    return ReportStrategyResponse(
+        dataset_id=record.id, filename=record.filename, recommendations=recommendations
+    )
+
+
+def update_chart(
+    dataset_id: str, chart_id: str, request: UpdateChartRequest, user: CurrentUser
+) -> ChartRecommendation:
+    """Edits one chart's displayed title/rationale in place -- unlike
+    add_custom_chart/remove_chart/reorder_charts, this never touches `sql`
+    or re-runs the query, it's purely a label edit. `exclude_unset=True`
+    distinguishes "not provided" from an explicit `rationale: ""` the same
+    way update_dataset_metadata does for description/notes."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    fields = request.model_dump(exclude_unset=True)
+    if "title" in fields:
+        fields["title"] = fields["title"].strip()
+    if "rationale" in fields and fields["rationale"] is not None:
+        fields["rationale"] = fields["rationale"].strip()
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    updated_chart: dict | None = None
+    updated_list = []
+    for r in existing:
+        if r["id"] == chart_id:
+            r = {**r, **fields}
+            updated_chart = r
+        updated_list.append(r)
+
+    if updated_chart is None:
+        raise HTTPException(status_code=404, detail="Chart not found")
+
+    repository.update_dataset_report_strategy(dataset_id, user.id, updated_list)
+    return ChartRecommendation(**updated_chart)
+
+
+def reorder_charts(dataset_id: str, chart_ids: list[str], user: CurrentUser) -> ReportStrategyResponse:
+    """Whole-array reorder (the frontend already holds the full list to
+    reorder locally before persisting -- same pattern as
+    presentations.replace_presentation()/settings' preset arrays, simpler
+    than a granular "move to index N" endpoint for a capped-size list).
+    `chart_ids` must be a permutation of the dataset's current chart ids
+    exactly -- a mismatch (stale client state, a chart deleted elsewhere in
+    the meantime) is rejected rather than silently dropping or ignoring the
+    extras, since either is a sign the client's copy of the list is stale."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    by_id = {r["id"]: r for r in existing}
+    if set(chart_ids) != set(by_id):
+        raise HTTPException(
+            status_code=400, detail="chart_ids must match the dataset's current charts exactly"
+        )
+
+    reordered = [by_id[chart_id] for chart_id in chart_ids]
+    repository.update_dataset_report_strategy(dataset_id, user.id, reordered)
+    recommendations = [ChartRecommendation(**r) for r in reordered]
     return ReportStrategyResponse(
         dataset_id=record.id, filename=record.filename, recommendations=recommendations
     )

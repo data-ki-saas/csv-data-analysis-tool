@@ -4,7 +4,12 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChartCard } from "@/components/charts/ChartCard";
 import { useDatasetSchema } from "@/hooks/useDatasetSchema";
-import { useReportStrategy } from "@/hooks/useReportStrategy";
+import {
+  useAddCustomChart,
+  useDeleteChart,
+  useReorderCharts,
+  useReportStrategy,
+} from "@/hooks/useReportStrategy";
 import type { ChartFilter } from "@/lib/chartQueries";
 
 export default function ReportsPage() {
@@ -12,7 +17,11 @@ export default function ReportsPage() {
 
   const schema = useDatasetSchema(datasetId);
   const strategy = useReportStrategy(datasetId);
+  const addCustomChart = useAddCustomChart(datasetId);
+  const deleteChart = useDeleteChart(datasetId);
+  const reorderCharts = useReorderCharts(datasetId);
   const [filter, setFilter] = useState<ChartFilter | null>(null);
+  const [customPrompt, setCustomPrompt] = useState("");
 
   const recommendations = strategy.data?.recommendations ?? [];
 
@@ -28,6 +37,21 @@ export default function ReportsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schema.data?.has_report_strategy]);
+
+  function handleAddCustomChart(e: React.FormEvent) {
+    e.preventDefault();
+    const prompt = customPrompt.trim();
+    if (!prompt) return;
+    addCustomChart.mutate(prompt, { onSuccess: () => setCustomPrompt("") });
+  }
+
+  function handleMove(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= recommendations.length) return;
+    const reordered = [...recommendations];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    reorderCharts.mutate(reordered.map((r) => r.id));
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-12">
@@ -60,6 +84,38 @@ export default function ReportsPage() {
         </p>
       )}
 
+      <form onSubmit={handleAddCustomChart} className="flex flex-wrap items-center gap-2">
+        <input
+          value={customPrompt}
+          onChange={(e) => setCustomPrompt(e.target.value)}
+          placeholder="Describe a chart, e.g. &quot;distribution of annual income city wise&quot;"
+          disabled={addCustomChart.isPending}
+          className="min-w-0 flex-1 rounded border border-border bg-surface px-3 py-2 text-sm"
+        />
+        <button
+          type="submit"
+          disabled={addCustomChart.isPending || !customPrompt.trim()}
+          className="rounded bg-accent px-4 py-2 text-sm text-accent-foreground disabled:opacity-50"
+        >
+          {addCustomChart.isPending ? "Adding chart…" : "Add chart"}
+        </button>
+      </form>
+      {addCustomChart.isError && (
+        <p className="text-sm text-red-600">
+          Couldn&apos;t add that chart: {(addCustomChart.error as Error).message}
+        </p>
+      )}
+      {deleteChart.isError && (
+        <p className="text-sm text-red-600">
+          Couldn&apos;t delete that chart: {(deleteChart.error as Error).message}
+        </p>
+      )}
+      {reorderCharts.isError && (
+        <p className="text-sm text-red-600">
+          Couldn&apos;t reorder charts: {(reorderCharts.error as Error).message}
+        </p>
+      )}
+
       {filter && (
         <div className="flex items-center gap-2 self-start rounded border border-accent bg-accent/10 px-3 py-1.5 text-sm">
           <span>Filter: {filter.label}</span>
@@ -82,7 +138,8 @@ export default function ReportsPage() {
         schema.data &&
         !schema.data.has_report_strategy && (
           <p className="py-10 text-center text-sm opacity-60">
-            No report yet — click &quot;Generate visual report&quot; to get AI-recommended charts for this dataset.
+            No report yet — click &quot;Generate visual report&quot; to get AI-recommended charts for this dataset,
+            or describe one above.
           </p>
         )}
 
@@ -93,13 +150,19 @@ export default function ReportsPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {recommendations.map((recommendation) => (
+        {recommendations.map((recommendation, index) => (
           <ChartCard
-            key={recommendation.column + recommendation.chart_type}
+            key={recommendation.id}
             datasetId={datasetId}
             recommendation={recommendation}
             filter={filter}
             onFilterChange={setFilter}
+            onMoveUp={() => handleMove(index, -1)}
+            onMoveDown={() => handleMove(index, 1)}
+            canMoveUp={index > 0}
+            canMoveDown={index < recommendations.length - 1}
+            onDelete={() => deleteChart.mutate(recommendation.id)}
+            deleting={deleteChart.isPending && deleteChart.variables === recommendation.id}
           />
         ))}
       </div>

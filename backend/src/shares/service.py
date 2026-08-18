@@ -10,9 +10,11 @@ from src.shares import repository
 from src.shares.schemas import ChartShare
 
 
-def _assert_owns_dataset(dataset_id: str, user: CurrentUser) -> None:
-    if datasets_repository.get_dataset(dataset_id, user.id) is None:
+def _get_owned_dataset(dataset_id: str, user: CurrentUser) -> datasets_repository.DatasetRecord:
+    record = datasets_repository.get_dataset(dataset_id, user.id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    return record
 
 
 def _active_preset(presets: list[dict]) -> dict | None:
@@ -30,6 +32,8 @@ def _to_chart_share(record: repository.ChartShareRecord) -> ChartShare:
         created_at=record.created_at,
         header_snapshot=record.header_snapshot,
         footer_snapshot=record.footer_snapshot,
+        dataset_name=record.dataset_name,
+        dataset_description=record.dataset_description,
     )
 
 
@@ -43,10 +47,11 @@ def create_chart_share(
     R2, or SQL execution at all, only this one row.
 
     Also snapshots the owner's currently-active header/footer branding
-    presets (if any) for the same reason: the public page has no session to
-    fetch live settings with, and a later branding change shouldn't
-    retroactively alter links already shared."""
-    _assert_owns_dataset(dataset_id, user)
+    presets (if any), and the dataset's own name/description, for the same
+    reason: the public page has no session to fetch either live with, and a
+    later branding change or dataset rename shouldn't retroactively alter a
+    link already shared."""
+    dataset = _get_owned_dataset(dataset_id, user)
     token = secrets.token_urlsafe(24)
 
     owner_settings = settings_repository.get_settings(user.id)
@@ -64,12 +69,14 @@ def create_chart_share(
         result=request.result.model_dump(),
         header_snapshot=header_snapshot,
         footer_snapshot=footer_snapshot,
+        dataset_name=dataset.name,
+        dataset_description=dataset.description,
     )
     return _to_chart_share(record)
 
 
 def revoke_chart_share(dataset_id: str, token: str, user: CurrentUser) -> None:
-    _assert_owns_dataset(dataset_id, user)
+    _get_owned_dataset(dataset_id, user)
     repository.delete_share(dataset_id, user.id, token)
 
 

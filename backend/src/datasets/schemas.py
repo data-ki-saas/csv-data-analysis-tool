@@ -125,6 +125,19 @@ class UpdateColumnRequest(BaseModel):
 
 
 class ChartRecommendation(BaseModel):
+    # Assigned server-side (never by the LLM) so an individual chart can be
+    # deleted or reordered later -- see service._with_ids() for how older
+    # cached recommendations (persisted before this field existed) get one
+    # backfilled on first load.
+    id: str
+    # "auto" (the default, including every recommendation persisted before
+    # this field existed) came from generate_report_strategy's whole-dataset
+    # LLM pass; "custom" came from a user's free-text request
+    # (service.add_custom_chart). generate_report_strategy(force=True)
+    # ("Regenerate report") only recomputes/replaces the "auto" set --
+    # "custom" charts survive a regenerate, since they aren't part of what
+    # that whole-dataset strategy pass is reconsidering.
+    source: Literal["auto", "custom"] = "auto"
     column: str
     partition_type: Literal["datetime", "numerical_bins", "categorical"]
     chart_type: Literal["line", "bar", "pie", "histogram", "bell_curve"]
@@ -151,6 +164,40 @@ class ReportStrategyRequest(BaseModel):
     # the "Regenerate report" click (shown once recommendations already
     # exist) sends.
     force: bool = False
+
+
+class CustomChartRequest(BaseModel):
+    # e.g. "show me distribution of annual income city wise" -- see
+    # strategy_engine.suggest_custom_chart(). Capped well above any
+    # reasonable request; this isn't a free-text notes field.
+    prompt: str = Field(min_length=1, max_length=300)
+
+
+class UpdateChartRequest(BaseModel):
+    """Edits a chart's displayed title and/or subtitle (`rationale`) --
+    both originally LLM-generated, but not fixed once shown. Same
+    at-least-one-field / model_fields_set pattern as UpdateDatasetRequest:
+    `title` can never be blank, `rationale` can be cleared to ""."""
+
+    title: str | None = None
+    rationale: str | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> "UpdateChartRequest":
+        if not self.model_fields_set:
+            raise ValueError("Provide at least one of title or rationale")
+        if "title" in self.model_fields_set and (self.title is None or not self.title.strip()):
+            raise ValueError("title cannot be blank")
+        return self
+
+
+class ReorderChartsRequest(BaseModel):
+    # The full, reordered list of every chart id currently on the dataset's
+    # report -- a whole-array replace (like presentations/branding presets
+    # elsewhere in this codebase) rather than a granular "move chart to
+    # index N" endpoint, since the frontend already has the full list in
+    # memory to reorder locally before persisting.
+    chart_ids: list[str]
 
 
 class GenerateInsightsRequest(BaseModel):

@@ -143,3 +143,31 @@ async def test_create_share_without_any_enabled_preset_has_no_branding_snapshot(
     body = response.json()
     assert body["header_snapshot"] is None
     assert body["footer_snapshot"] is None
+
+
+async def test_create_share_snapshots_dataset_name_and_description(client, sample_csv_path):
+    dataset_id = await _upload(client, sample_csv_path)
+    await client.patch(
+        f"/api/datasets/{dataset_id}", json={"name": "Q1 Sales", "description": "Regional sales for Q1."}
+    )
+
+    response = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+
+    body = response.json()
+    assert body["dataset_name"] == "Q1 Sales"
+    assert body["dataset_description"] == "Regional sales for Q1."
+
+
+async def test_share_dataset_snapshot_is_frozen_at_creation_time(client, sample_csv_path):
+    dataset_id = await _upload(client, sample_csv_path)
+    await client.patch(f"/api/datasets/{dataset_id}", json={"name": "Original Name"})
+
+    created = await client.post(f"/api/datasets/{dataset_id}/shares", json=_CHART_PAYLOAD)
+    token = created.json()["token"]
+
+    # The owner renames the dataset after sharing -- the already-shared link
+    # keeps the old snapshot.
+    await client.patch(f"/api/datasets/{dataset_id}", json={"name": "Renamed Later"})
+
+    public_response = await client.get(f"/api/shares/{token}")
+    assert public_response.json()["dataset_name"] == "Original Name"

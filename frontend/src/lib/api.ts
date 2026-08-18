@@ -189,6 +189,8 @@ export type PartitionType = "datetime" | "numerical_bins" | "categorical";
 export type ChartType = "line" | "bar" | "pie" | "histogram" | "bell_curve";
 
 export interface ChartRecommendation {
+  id: string;
+  source: "auto" | "custom";
   column: string;
   partition_type: PartitionType;
   chart_type: ChartType;
@@ -210,6 +212,49 @@ export async function generateReportStrategy(datasetId: string, force = false) {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeader()) },
     body: JSON.stringify({ force }),
+  });
+  return handleResponse<ReportStrategy>(response);
+}
+
+export async function addCustomChart(datasetId: string, prompt: string) {
+  const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}/report-strategy/custom`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ prompt }),
+  });
+  return handleResponse<ChartRecommendation>(response);
+}
+
+export async function deleteChart(datasetId: string, chartId: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/report-strategy/${encodeURIComponent(chartId)}`,
+    { method: "DELETE", headers: await authHeader() }
+  );
+  return handleResponse<ReportStrategy>(response);
+}
+
+export interface UpdateChartInput {
+  title?: string;
+  rationale?: string;
+}
+
+export async function updateChart(datasetId: string, chartId: string, input: UpdateChartInput) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/report-strategy/${encodeURIComponent(chartId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify(input),
+    }
+  );
+  return handleResponse<ChartRecommendation>(response);
+}
+
+export async function reorderCharts(datasetId: string, chartIds: string[]) {
+  const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}/report-strategy/order`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ chart_ids: chartIds }),
   });
   return handleResponse<ReportStrategy>(response);
 }
@@ -254,6 +299,8 @@ export interface ChartShare {
   created_at: string;
   header_snapshot: HeaderPreset | null;
   footer_snapshot: FooterPreset | null;
+  dataset_name: string | null;
+  dataset_description: string | null;
 }
 
 // Reuses GenerateInsightsInput's shape -- the backend's create-share request

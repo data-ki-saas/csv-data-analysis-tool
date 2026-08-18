@@ -84,6 +84,24 @@ export function RevokeIcon() {
   );
 }
 
+export function ArrowUpIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <polyline points="6 12 12 6 18 12" />
+      <line x1="12" y1="6" x2="12" y2="18" />
+    </svg>
+  );
+}
+
+export function ArrowDownIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <polyline points="6 12 12 18 18 12" />
+      <line x1="12" y1="6" x2="12" y2="18" />
+    </svg>
+  );
+}
+
 export function TrashIcon() {
   return (
     <svg {...ICON_PROPS}>

@@ -3,13 +3,17 @@ from fastapi import APIRouter, Depends, UploadFile
 from src.core.auth import CurrentUser, get_current_user
 from src.datasets import service
 from src.datasets.schemas import (
+    ChartRecommendation,
+    CustomChartRequest,
     DatasetInfo,
     DatasetSchemaResponse,
     GenerateInsightsRequest,
     InsightsResponse,
+    ReorderChartsRequest,
     ReportStrategyRequest,
     ReportStrategyResponse,
     ReviewColumnsRequest,
+    UpdateChartRequest,
     UpdateColumnRequest,
     UpdateDatasetRequest,
     UploadResponse,
@@ -86,6 +90,43 @@ async def get_report_strategy(
     user: CurrentUser = Depends(get_current_user),
 ) -> ReportStrategyResponse:
     return await service.generate_report_strategy(dataset_id, request.force, user)
+
+
+@router.post("/{dataset_id}/report-strategy/custom", response_model=ChartRecommendation)
+async def add_custom_chart(
+    dataset_id: str,
+    request: CustomChartRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> ChartRecommendation:
+    return await service.add_custom_chart(dataset_id, request.prompt, user)
+
+
+@router.delete("/{dataset_id}/report-strategy/{chart_id}", response_model=ReportStrategyResponse)
+async def delete_chart(
+    dataset_id: str,
+    chart_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> ReportStrategyResponse:
+    return service.remove_chart(dataset_id, chart_id, user)
+
+
+@router.patch("/{dataset_id}/report-strategy/{chart_id}", response_model=ChartRecommendation)
+async def update_chart(
+    dataset_id: str,
+    chart_id: str,
+    request: UpdateChartRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> ChartRecommendation:
+    return service.update_chart(dataset_id, chart_id, request, user)
+
+
+@router.put("/{dataset_id}/report-strategy/order", response_model=ReportStrategyResponse)
+async def reorder_charts(
+    dataset_id: str,
+    request: ReorderChartsRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> ReportStrategyResponse:
+    return service.reorder_charts(dataset_id, request.chart_ids, user)
 
 
 @router.post("/{dataset_id}/insights", response_model=InsightsResponse)
