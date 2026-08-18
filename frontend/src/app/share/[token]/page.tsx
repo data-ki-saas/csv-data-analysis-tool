@@ -95,7 +95,7 @@ export default function SharedChartPage() {
         >
           <div className="flex items-start justify-between gap-2">
             <div
-              className="font-medium"
+              className="min-w-0 break-words font-medium"
               dangerouslySetInnerHTML={{
                 __html: renderBrandedHeaderHtml(query.data.header_snapshot, query.data.title),
               }}

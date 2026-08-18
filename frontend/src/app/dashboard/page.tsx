@@ -88,6 +88,11 @@ export default function DashboardPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Your datasets</h2>
         {datasets.isLoading && <p className="text-sm opacity-70">Loading…</p>}
+        {datasets.isError && (
+          <p className="text-sm text-red-600">
+            Couldn&apos;t load your datasets: {(datasets.error as Error).message}
+          </p>
+        )}
         {datasets.data?.length === 0 && (
           <p className="text-sm opacity-70">No datasets uploaded yet.</p>
         )}

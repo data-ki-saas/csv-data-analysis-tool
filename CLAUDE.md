@@ -689,6 +689,15 @@ leaking existence of other users' datasets).
   class-based variant (`@custom-variant dark (&:where(.dark, .dark *));`) instead of
   the Tailwind default `prefers-color-scheme` media query, since theme mode is now a
   user setting, not just an OS preference.
+  - **Mobile overflow gotcha**: a flex child holding unbounded dynamic text (a dataset
+    name, a chart's LLM-generated title, branded header HTML) next to a fixed-size
+    sibling (an icon button, a badge) needs `min-w-0` on the text container — flex
+    items default to `min-width: auto`, which refuses to shrink below the text's
+    natural width and pushes the row wider than its container on narrow screens
+    instead of wrapping. `DatasetCard`, `ChartCard`, and the public share page's chart
+    header all hit this; fixed by adding `min-w-0` (+ `break-words` where the text
+    could be one long unbroken token, like a filename-derived name) to the text side
+    of each `justify-between` row.
 - `src/components/theme-provider.tsx` / `theme-sync.tsx` — theme state (light/dark/
   system + one of 6 colour themes) lives in localStorage first for instant, no-flash
   apply (see the inline `<script>` in `layout.tsx`, which must stay in sync with

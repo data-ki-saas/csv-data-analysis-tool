@@ -29,15 +29,15 @@ export function SiteHeader() {
 
   return (
     <header className="border-b border-border">
-      <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-4 px-4 py-4">
-        <Link href="/" className="flex items-center gap-2 text-lg font-semibold">
+      <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-2 px-4 py-4 sm:gap-4">
+        <Link href="/" className="flex min-w-0 items-center gap-2 text-base font-semibold sm:text-lg">
           <span className="h-6 w-6 shrink-0">
             <HomeIcon />
           </span>
-          CSV Data Analysis Tool
+          <span className="truncate">CSV Data Analysis Tool</span>
         </Link>
 
-        <nav className="flex items-center gap-4 text-sm">
+        <nav className="flex shrink-0 items-center gap-2 text-sm sm:gap-4">
           {NAV_LINKS.map((link) => (
             <Link key={link.href} href={link.href} className="hidden underline sm:inline">
               {link.label}
@@ -54,7 +54,8 @@ export function SiteHeader() {
                 Sign in
               </Link>
               <Link href="/signup" className="rounded bg-accent px-3 py-1.5 text-accent-foreground">
-                Sign up free
+                <span className="sm:hidden">Sign up</span>
+                <span className="hidden sm:inline">Sign up free</span>
               </Link>
             </>
           )}

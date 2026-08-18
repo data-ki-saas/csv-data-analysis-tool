@@ -203,8 +203,8 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="font-medium">{recommendation.title}</h3>
+        <div className="min-w-0">
+          <h3 className="break-words font-medium">{recommendation.title}</h3>
           {recommendation.rationale && <p className="text-xs opacity-60">{recommendation.rationale}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">

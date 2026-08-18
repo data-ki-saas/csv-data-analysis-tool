@@ -98,7 +98,7 @@ export default function MarketingPage() {
             for your next YouTube upload — no data warehouse, no video editor, no redesigning
             from scratch.
           </p>
-          <div className="flex items-center justify-center gap-4">
+          <div className="flex flex-wrap items-center justify-center gap-4">
             <Link
               href="/signup"
               className="rounded bg-accent px-5 py-2.5 font-medium text-accent-foreground"

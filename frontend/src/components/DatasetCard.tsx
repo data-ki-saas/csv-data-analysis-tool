@@ -39,7 +39,7 @@ function NameEditor({
         type="button"
         onClick={() => setEditing(true)}
         title="Click to rename"
-        className="text-left font-medium underline decoration-dotted underline-offset-2"
+        className="w-full break-words text-left font-medium underline decoration-dotted underline-offset-2"
       >
         {name}
       </button>
@@ -137,11 +137,13 @@ export function DatasetCard({ dataset, onUpdate, onDelete, deleting, updating }:
   return (
     <div className="flex flex-col gap-3 rounded border border-black/10 p-4 text-sm dark:border-white/20">
       <div className="flex items-start justify-between gap-2">
-        <NameEditor
-          name={dataset.name}
-          disabled={updating}
-          onSave={(name) => onUpdate({ name })}
-        />
+        <div className="min-w-0 flex-1">
+          <NameEditor
+            name={dataset.name}
+            disabled={updating}
+            onSave={(name) => onUpdate({ name })}
+          />
+        </div>
         <IconButton label={deleting ? "Deleting…" : "Delete dataset"} onClick={onDelete} disabled={deleting}>
           <TrashIcon />
         </IconButton>
