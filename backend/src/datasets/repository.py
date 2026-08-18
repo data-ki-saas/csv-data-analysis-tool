@@ -11,6 +11,9 @@ class DatasetRecord:
     id: str
     owner_id: str
     filename: str
+    name: str
+    description: str | None
+    notes: str | None
     row_count: int
     schema: list[dict]
     raw_key: str
@@ -25,18 +28,24 @@ def create_dataset(
     *,
     owner_id: str,
     filename: str,
+    name: str,
     row_count: int,
     schema: list[dict],
     raw_key: str,
     parquet_key: str,
     health_score: float,
     content_hash: str,
+    description: str | None = None,
+    notes: str | None = None,
     report_strategy: list[dict] | None = None,
 ) -> DatasetRecord:
     payload = {
         "id": str(uuid.uuid4()),
         "owner_id": owner_id,
         "filename": filename,
+        "name": name,
+        "description": description,
+        "notes": notes,
         "row_count": row_count,
         "schema": schema,
         "raw_key": raw_key,
@@ -112,6 +121,27 @@ def update_dataset_report_strategy(
         get_supabase_client()
         .table(_TABLE)
         .update({"report_strategy": report_strategy})
+        .eq("id", dataset_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return DatasetRecord(**result.data[0])
+
+
+def update_dataset_metadata(dataset_id: str, owner_id: str, fields: dict) -> DatasetRecord | None:
+    """Partial update for the user-editable name/description -- `fields` is
+    whatever the caller decided actually changed (see
+    service.update_dataset_metadata, which uses Pydantic's
+    `exclude_unset=True` to distinguish "not provided" from "explicitly
+    cleared to empty/null", something a plain `None`-means-unset convention
+    can't express since description's own valid range already includes
+    None)."""
+    result = (
+        get_supabase_client()
+        .table(_TABLE)
+        .update(fields)
         .eq("id", dataset_id)
         .eq("owner_id", owner_id)
         .execute()

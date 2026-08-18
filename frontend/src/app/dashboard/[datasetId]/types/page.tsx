@@ -1,9 +1,10 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ColumnCategory, ColumnInfo } from "@/lib/api";
 import { useDatasetSchema, useReviewColumnTypes, useUpdateColumn } from "@/hooks/useDatasetSchema";
+import { useUpdateDataset } from "@/hooks/useDatasets";
 import { cn } from "@/lib/utils";
 
 const CATEGORY_OPTIONS: { value: ColumnCategory; label: string }[] = [
@@ -90,9 +91,23 @@ export default function ColumnTypesPage() {
   const schema = useDatasetSchema(datasetId);
   const review = useReviewColumnTypes(datasetId);
   const updateColumn = useUpdateColumn(datasetId);
+  const updateDataset = useUpdateDataset();
 
   const data = schema.data;
   const flagged = data?.columns.filter((col) => col.needs_review) ?? [];
+
+  // null = "no local edits yet, defer to the query result" -- same
+  // local-state-forks-from-query pattern used elsewhere (AliasEditor,
+  // presentation builder, settings branding).
+  const [localNotes, setLocalNotes] = useState<string | null>(null);
+  const notes = localNotes ?? data?.notes ?? "";
+
+  useEffect(() => {
+    if (localNotes === null) return;
+    const timeout = setTimeout(() => updateDataset.mutate({ datasetId, notes: localNotes }), 800);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localNotes]);
 
   function handleReviewColumn(column: ColumnInfo) {
     review.mutate([column.name]);
@@ -111,7 +126,7 @@ export default function ColumnTypesPage() {
         <>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-border p-4">
             <div>
-              <p className="font-medium">{data.filename}</p>
+              <p className="font-medium">{data.name}</p>
               <p className="text-sm opacity-70">
                 {data.row_count.toLocaleString()} rows · Health score {data.health_score}%
                 {flagged.length > 0 &&
@@ -136,6 +151,27 @@ export default function ColumnTypesPage() {
               Couldn&apos;t save that change: {(updateColumn.error as Error).message}
             </p>
           )}
+          {updateDataset.isError && (
+            <p className="text-sm text-red-600">
+              Couldn&apos;t save notes: {(updateDataset.error as Error).message}
+            </p>
+          )}
+
+          <section className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-medium">Notes</h2>
+              <span className="text-xs opacity-60">
+                {updateDataset.isPending ? "Saving…" : localNotes !== null ? "Saved" : ""}
+              </span>
+            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => setLocalNotes(e.target.value)}
+              placeholder="Write a detailed analysis of this data — observations, caveats, follow-ups…"
+              rows={5}
+              className="w-full resize-y rounded border border-border bg-surface p-2 text-sm"
+            />
+          </section>
 
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">Columns</h2>

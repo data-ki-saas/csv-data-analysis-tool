@@ -36,7 +36,7 @@ export default function ReportsPage() {
       {schema.data && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-border p-4">
           <div>
-            <p className="font-medium">{schema.data.filename}</p>
+            <p className="font-medium">{schema.data.name}</p>
             <p className="text-sm opacity-70">{schema.data.row_count.toLocaleString()} rows</p>
           </div>
           <button

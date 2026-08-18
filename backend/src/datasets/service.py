@@ -24,6 +24,7 @@ from src.datasets.schemas import (
     GenerateInsightsRequest,
     InsightsResponse,
     ReportStrategyResponse,
+    UpdateDatasetRequest,
     UploadResponse,
 )
 from src.datasets.strategy_engine import suggest_visual_strategy
@@ -90,6 +91,7 @@ async def _create_deduplicated_dataset(
         record = repository.create_dataset(
             owner_id=user.id,
             filename=filename,
+            name=filename,
             row_count=matched.row_count,
             schema=matched.schema,
             raw_key=matched.raw_key,
@@ -119,6 +121,9 @@ async def _create_deduplicated_dataset(
     return UploadResponse(
         dataset_id=record.id,
         filename=record.filename,
+        name=record.name,
+        description=record.description,
+        notes=record.notes,
         row_count=record.row_count,
         health_score=record.health_score,
         schema=[ColumnInfo(**col) for col in record.schema],
@@ -192,6 +197,7 @@ async def ingest_csv_upload(file: UploadFile, user: CurrentUser) -> UploadRespon
         record = repository.create_dataset(
             owner_id=user.id,
             filename=file.filename,
+            name=file.filename,
             row_count=result.row_count,
             schema=schema_dicts,
             raw_key=raw_key,
@@ -220,6 +226,9 @@ async def ingest_csv_upload(file: UploadFile, user: CurrentUser) -> UploadRespon
     return UploadResponse(
         dataset_id=record.id,
         filename=record.filename,
+        name=record.name,
+        description=record.description,
+        notes=record.notes,
         row_count=record.row_count,
         health_score=record.health_score,
         schema=[ColumnInfo(**col) for col in record.schema],
@@ -235,6 +244,9 @@ def get_dataset_info(dataset_id: str, user: CurrentUser) -> DatasetInfo:
     return DatasetInfo(
         dataset_id=record.id,
         filename=record.filename,
+        name=record.name,
+        description=record.description,
+        notes=record.notes,
         row_count=record.row_count,
         health_score=record.health_score,
         schema=[ColumnInfo(**col) for col in record.schema],
@@ -246,12 +258,46 @@ def list_datasets(user: CurrentUser) -> list[DatasetInfo]:
         DatasetInfo(
             dataset_id=record.id,
             filename=record.filename,
+            name=record.name,
+            description=record.description,
+            notes=record.notes,
             row_count=record.row_count,
             health_score=record.health_score,
             schema=[ColumnInfo(**col) for col in record.schema],
         )
         for record in repository.list_datasets(user.id)
     ]
+
+
+def update_dataset_metadata(
+    dataset_id: str, request: UpdateDatasetRequest, user: CurrentUser
+) -> DatasetInfo:
+    """Rename a dataset and/or edit its description/notes. `exclude_unset=True`
+    passes through exactly the fields present in the request body -- a
+    provided `description: ""` (or `notes: ""`) clears it (stored as NULL),
+    while an omitted field leaves the existing value untouched. See
+    UpdateDatasetRequest and repository.update_dataset_metadata."""
+    fields = request.model_dump(exclude_unset=True)
+    for text_field in ("description", "notes"):
+        if text_field in fields and fields[text_field] is not None:
+            fields[text_field] = fields[text_field].strip() or None
+    if "name" in fields:
+        fields["name"] = fields["name"].strip()
+
+    updated = repository.update_dataset_metadata(dataset_id, user.id, fields)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    return DatasetInfo(
+        dataset_id=updated.id,
+        filename=updated.filename,
+        name=updated.name,
+        description=updated.description,
+        notes=updated.notes,
+        row_count=updated.row_count,
+        health_score=updated.health_score,
+        schema=[ColumnInfo(**col) for col in updated.schema],
+    )
 
 
 def delete_dataset(dataset_id: str, user: CurrentUser) -> None:
@@ -278,6 +324,9 @@ def _to_schema_response(
     return DatasetSchemaResponse(
         dataset_id=record.id,
         filename=record.filename,
+        name=record.name,
+        description=record.description,
+        notes=record.notes,
         row_count=record.row_count,
         created_at=record.created_at,
         health_score=record.health_score,

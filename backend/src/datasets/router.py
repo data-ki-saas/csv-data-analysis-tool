@@ -11,6 +11,7 @@ from src.datasets.schemas import (
     ReportStrategyResponse,
     ReviewColumnsRequest,
     UpdateColumnRequest,
+    UpdateDatasetRequest,
     UploadResponse,
 )
 
@@ -46,6 +47,15 @@ async def get_dataset_schema(
 @router.delete("/{dataset_id}", status_code=204)
 async def delete_dataset(dataset_id: str, user: CurrentUser = Depends(get_current_user)) -> None:
     service.delete_dataset(dataset_id, user)
+
+
+@router.patch("/{dataset_id}", response_model=DatasetInfo, response_model_by_alias=True)
+async def update_dataset(
+    dataset_id: str,
+    request: UpdateDatasetRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> DatasetInfo:
+    return service.update_dataset_metadata(dataset_id, request, user)
 
 
 @router.post("/{dataset_id}/schema/review", response_model=DatasetSchemaResponse)

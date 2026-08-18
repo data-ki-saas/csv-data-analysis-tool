@@ -104,6 +104,9 @@ export interface ColumnInfo {
 export interface DatasetInfo {
   dataset_id: string;
   filename: string;
+  name: string;
+  description: string | null;
+  notes: string | null;
   row_count: number;
   health_score: number;
   schema: ColumnInfo[];
@@ -113,9 +116,27 @@ export interface UploadResponse extends DatasetInfo {
   preview: { columns: string[]; rows: unknown[][] };
 }
 
+export interface UpdateDatasetInput {
+  name?: string;
+  description?: string;
+  notes?: string;
+}
+
+export async function updateDataset(datasetId: string, input: UpdateDatasetInput) {
+  const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<DatasetInfo>(response);
+}
+
 export interface DatasetSchema {
   dataset_id: string;
   filename: string;
+  name: string;
+  description: string | null;
+  notes: string | null;
   row_count: number;
   created_at: string;
   health_score: number;

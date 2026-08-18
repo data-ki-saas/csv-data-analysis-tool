@@ -167,6 +167,21 @@ There is no top-level build/test command — the two halves are run independentl
   code is. `update_dataset_schema()` is the one mutation after ingestion — it only ever
   rewrites the `schema` column (AI review / user override), never `row_count` or the R2
   keys, since those are fixed at ingest time.
+  - **Name/description/notes**: `name` (defaults to the uploaded filename at ingest,
+    never blank), `description` (nullable, ≤200 chars, meant to fit on a dataset card),
+    and `notes` (nullable, uncapped, for a longer analysis writeup) are user-editable
+    via `PATCH /api/datasets/{id}` (`service.update_dataset_metadata()` /
+    `UpdateDatasetRequest`) independently of the filename, which stays fixed at
+    ingestion as the record of what was actually uploaded. `update_dataset_metadata()`
+    (repository) takes a plain `fields: dict` built by the service from
+    `request.model_dump(exclude_unset=True)` — not a `name`/`description` kwarg pair
+    defaulting to `None` — because `None` can't serve as the "field not provided in this
+    PATCH" sentinel when the field's own valid values already include null (an explicit
+    `description: ""` must clear it, which is different from omitting `description`
+    entirely to leave it untouched). A deduplicated upload (see below) gets its own
+    default `name` (= its own filename), not the matched row's name, matching how it
+    already gets its own filename and identity — only the computed artifacts
+    (schema/health/row_count/report_strategy) are copied forward.
 - `src/storage/r2_client.py` — boto3 client for the raw CSV upload/delete only. Parquet
   read/write goes through DuckDB's own `httpfs` extension instead (configured in
   `duckdb_manager.py`), not through this module.
@@ -485,7 +500,28 @@ leaking existence of other users' datasets).
 - `src/hooks/` — thin TanStack Query wrappers (`useUploadDataset`, `useDatasets`,
   `useDatasetSchema`, `useReportStrategy`, `useGenerateInsights`, `usePresentation`)
   around `src/lib/api.ts`. Data-fetching in this project goes through React Query, not
-  raw `useEffect`/`fetch`.
+  raw `useEffect`/`fetch`. `useUpdateDataset` (in `useDatasets.ts`, alongside
+  `useDeleteDataset`) is shared by every surface that edits name/description/notes —
+  its `onSuccess` both invalidates the `["datasets"]` list query and patches the
+  changed fields directly into the `["datasetSchema", datasetId]` cache entry (rather
+  than invalidating and refetching it) so an open Column Types/Reports/Presentation
+  page reflects a rename made from the dashboard card without an extra round trip.
+- `/dashboard` — "Your datasets" renders one `DatasetCard`
+  (`src/components/DatasetCard.tsx`) per dataset in a responsive grid (this replaced a
+  plain list). Each card: an inline click-to-edit `name` (same commit-on-blur/Enter
+  pattern as the column `AliasEditor` below), a click-to-edit `description` (a
+  `<textarea maxLength={200}>` with a live character count) that falls back to an
+  *auto-generated* one-liner (`"{row_count} rows · {columns} columns · {health}%
+  health"`, computed client-side from fields the card already has — no extra request)
+  whenever the user hasn't written their own, `line-clamp-3`'d so a long description
+  still fits neatly instead of blowing out card height, row count, the existing Review
+  types/Visual reports/Presentation links, and a delete (trash icon) button. Deleting
+  confirms via `window.confirm()` (no modal library) describing exactly what cascades
+  (column types, visual reports, presentation, share links) before calling `DELETE
+  /api/datasets/{id}` — already fully handled server-side (ref-counts shared R2
+  storage from dedup, and Postgres `ON DELETE CASCADE` on `presentations` /
+  `chart_insights_cache` / `chart_shares` handles the rest), so this needed no backend
+  changes, only the frontend affordance.
 - `/dashboard/[datasetId]/types` — the column-editing page: a category `<select>` and
   a click-to-rename alias field per column (both via `useUpdateColumn`, i.e. the
   `PATCH .../schema/columns/{name}` that can set either or both in one call), an
@@ -500,13 +536,27 @@ leaking existence of other users' datasets).
   (set when date/numeric-string normalization dropped some non-null values to `NULL`
   at ingest — see the massaging pipeline above) shows it inline next to that column's
   null percentage, so a lower health score has a visible reason instead of looking like
-  unexplained data loss. Inherits `noindex` from `dashboard/layout.tsx` — it's
-  auth-gated, same as the rest of `/dashboard`.
+  unexplained data loss. The header block shows the dataset's editable `name` (not its
+  fixed `filename`) and, below it, a **Notes** `<textarea>` for a longer analysis
+  writeup (the `notes` field — uncapped, unlike the dashboard card's 200-char
+  `description`) autosaved 800ms after the last keystroke via the same
+  local-state-forks-from-query + debounced-effect pattern as the presentation
+  builder/settings branding UI, through the shared `useUpdateDataset` hook. Inherits
+  `noindex` from `dashboard/layout.tsx` — it's auth-gated, same as the rest of
+  `/dashboard`.
 - `/dashboard/[datasetId]/reports` + `src/components/charts/` — the visualization
   dashboard: `useReportStrategy` triggers `POST .../report-strategy` on demand (not
   automatically, same reasoning as the type-review "Ask AI" button — don't spend an LLM
   call the user didn't ask for) and renders each recommendation as a `ChartCard` (the
-  "intelligent feed"). `ChartCard` dispatches on `partition_type` to `TimeSeriesChart`
+  "intelligent feed"). The one exception is a report that's already been generated on a
+  previous visit: `DatasetSchemaResponse.has_report_strategy` (true once
+  `report_strategy` is non-`NULL`, even if it's `[]`) lets the page auto-fire
+  `strategy.mutate(false)` on mount — `force=false` is a free cache hit server-side, no
+  LLM call — so returning to a dataset that's already been analyzed doesn't require
+  re-clicking "Generate visual report." A dataset that's never been analyzed
+  (`has_report_strategy` false) still waits for that first click, so no dataset is ever
+  auto-analyzed without the user having asked at least once. `ChartCard` dispatches on
+  `partition_type` to `TimeSeriesChart`
   (line/area toggle), `HistogramChart` (bars + an optional Gaussian overlay for
   `bell_curve` — see below), or `CategoricalChart` (bar/pie).
   - **Fast aggregation without another LLM round-trip**: `src/lib/chartQueries.ts`

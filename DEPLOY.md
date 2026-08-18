@@ -50,6 +50,9 @@ Deploy in this order — each later step needs credentials from an earlier one.
      `footer_presets` jsonb arrays to `user_settings` (up to 5 each).
    - `0010_add_branding_snapshot_to_chart_shares.sql` — adds `header_snapshot`/
      `footer_snapshot` jsonb to `chart_shares`.
+   - `0011_add_name_and_description_to_datasets.sql` — adds user-editable `name`
+     (backfilled from `filename`, then made `not null`), `description` (≤200 chars,
+     check constraint), and `notes` (uncapped) to `datasets`.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.
