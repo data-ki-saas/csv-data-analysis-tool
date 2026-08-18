@@ -340,6 +340,23 @@ export async function getPublicChartShare(token: string) {
   return handleResponse<ChartShare>(response);
 }
 
+// Server-safe variant for Server Components / route handlers (share page's
+// generateMetadata, opengraph-image) -- authHeader() calls createClient()
+// from lib/supabase/client.ts, the *browser* Supabase client, which isn't
+// usable outside a browser context. The share route ignores auth anyway (see
+// above), so this just skips that call and swallows failures into `null`
+// rather than throwing, since a broken/revoked link should still render a
+// fallback OG preview instead of a failed page render.
+export async function getPublicChartShareServer(token: string): Promise<ChartShare | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/shares/${encodeURIComponent(token)}`);
+    if (!response.ok) return null;
+    return (await response.json()) as ChartShare;
+  } catch {
+    return null;
+  }
+}
+
 export interface ChartBlock {
   type: "chart";
   id: string;
