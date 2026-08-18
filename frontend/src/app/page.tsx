@@ -1,112 +1,102 @@
-"use client";
+import type { Metadata } from "next";
+import Link from "next/link";
 
-import { useRouter } from "next/navigation";
-import { useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { useUploadDataset } from "@/hooks/useUploadDataset";
-import { useDatasets } from "@/hooks/useDatasets";
-import { cn } from "@/lib/utils";
+// Generated with backend/scripts/generate_seo.py --route /
+export const metadata: Metadata = {
+  title: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
+  description:
+    "Turn any CSV into business intelligence in seconds. Upload a file, get an instant schema and row-count preview, run SQL, and turn your csv to charts — interactive charts, no data warehouse required.",
+  alternates: { canonical: "/" },
+};
 
-export default function Home() {
-  const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const upload = useUploadDataset();
-  const datasets = useDatasets();
+const FEATURES = [
+  {
+    title: "Instant data intelligence",
+    body: "Upload a CSV with thousands to millions of rows and get an instant schema, row count, and preview — no setup, no data warehouse.",
+  },
+  {
+    title: "SQL for business intelligence",
+    body: "Query your data directly with SQL, powered by DuckDB, to answer real business intelligence questions without exporting to another tool.",
+  },
+  {
+    title: "CSV to charts, instantly",
+    body: "Go from raw CSV to interactive charts in a few clicks — explore trends and outliers visually as soon as your data is uploaded.",
+  },
+  {
+    title: "Built for your data, securely",
+    body: "Every dataset is scoped to your account, backed by Supabase auth, so your data intelligence stays private to you.",
+  },
+];
 
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "CSV Data Analysis Tool",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web",
+  description:
+    "Upload a CSV to get instant business intelligence: schema preview, SQL querying, and interactive charts.",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+};
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) upload.mutate(file);
-  }
-
+export default function MarketingPage() {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">CSV Data Analysis Tool</h1>
-        <button onClick={handleSignOut} className="text-sm underline">
-          Sign out
-        </button>
-      </div>
-
-      <section className="flex flex-col gap-3">
-        <label
-          className={cn(
-            "cursor-pointer rounded border-2 border-dashed border-black/15 px-6 py-10 text-center dark:border-white/20",
-            upload.isPending && "opacity-50"
-          )}
-        >
-          {upload.isPending ? "Uploading…" : "Click to select a CSV file"}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleFileChange}
-            disabled={upload.isPending}
-          />
-        </label>
-
-        {upload.isError && (
-          <p className="text-sm text-red-600">{(upload.error as Error).message}</p>
-        )}
-
-        {upload.isSuccess && (
-          <div className="flex flex-col gap-2 rounded border border-black/10 p-4 dark:border-white/20">
-            <p className="font-medium">
-              {upload.data.filename} — {upload.data.row_count.toLocaleString()} rows
-            </p>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr>
-                    {upload.data.preview.columns.map((col) => (
-                      <th key={col} className="border-b border-black/10 px-2 py-1 dark:border-white/20">
-                        {col}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {upload.data.preview.rows.map((row, i) => (
-                    <tr key={i}>
-                      {row.map((cell, j) => (
-                        <td key={j} className="px-2 py-1">
-                          {String(cell)}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Your datasets</h2>
-        {datasets.isLoading && <p className="text-sm opacity-70">Loading…</p>}
-        {datasets.data?.length === 0 && (
-          <p className="text-sm opacity-70">No datasets uploaded yet.</p>
-        )}
-        <ul className="flex flex-col gap-2">
-          {datasets.data?.map((dataset) => (
-            <li
-              key={dataset.dataset_id}
-              className="flex justify-between rounded border border-black/10 px-3 py-2 text-sm dark:border-white/20"
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+      />
+      <main className="mx-auto flex w-full max-w-4xl flex-col gap-16 px-4 py-16">
+        <header className="flex items-center justify-between">
+          <span className="text-lg font-semibold">CSV Data Analysis Tool</span>
+          <nav className="flex items-center gap-4 text-sm">
+            <Link href="/login" className="underline">
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="rounded bg-accent px-3 py-1.5 text-accent-foreground"
             >
-              <span>{dataset.filename}</span>
-              <span className="opacity-70">{dataset.row_count.toLocaleString()} rows</span>
-            </li>
+              Sign up free
+            </Link>
+          </nav>
+        </header>
+
+        <section className="flex flex-col gap-6 text-center">
+          <h1 className="text-4xl font-semibold sm:text-5xl">
+            Turn any CSV into business intelligence
+          </h1>
+          <p className="mx-auto max-w-2xl text-lg opacity-80">
+            Upload a CSV, get an instant schema and row-count preview, run SQL against it,
+            and turn the results into interactive charts — all without standing up a data
+            warehouse.
+          </p>
+          <div className="flex items-center justify-center gap-4">
+            <Link
+              href="/signup"
+              className="rounded bg-accent px-5 py-2.5 font-medium text-accent-foreground"
+            >
+              Get started free
+            </Link>
+            <Link href="/login" className="rounded border border-border px-5 py-2.5 font-medium">
+              Sign in
+            </Link>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          {FEATURES.map((feature) => (
+            <div key={feature.title} className="flex flex-col gap-2 rounded border border-border p-5">
+              <h2 className="font-medium">{feature.title}</h2>
+              <p className="text-sm opacity-80">{feature.body}</p>
+            </div>
           ))}
-        </ul>
-      </section>
-    </main>
+        </section>
+      </main>
+    </>
   );
 }

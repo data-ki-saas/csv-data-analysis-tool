@@ -2,7 +2,16 @@ from fastapi import APIRouter, Depends, UploadFile
 
 from src.core.auth import CurrentUser, get_current_user
 from src.datasets import service
-from src.datasets.schemas import DatasetInfo, UploadResponse
+from src.datasets.schemas import (
+    DatasetInfo,
+    DatasetSchemaResponse,
+    GenerateInsightsRequest,
+    InsightsResponse,
+    ReportStrategyResponse,
+    ReviewColumnsRequest,
+    UpdateColumnRequest,
+    UploadResponse,
+)
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -26,6 +35,50 @@ async def get_dataset(
     return service.get_dataset_info(dataset_id, user)
 
 
+@router.get("/{dataset_id}/schema", response_model=DatasetSchemaResponse)
+async def get_dataset_schema(
+    dataset_id: str, user: CurrentUser = Depends(get_current_user)
+) -> DatasetSchemaResponse:
+    return await service.get_dataset_schema(dataset_id, user)
+
+
 @router.delete("/{dataset_id}", status_code=204)
 async def delete_dataset(dataset_id: str, user: CurrentUser = Depends(get_current_user)) -> None:
     service.delete_dataset(dataset_id, user)
+
+
+@router.post("/{dataset_id}/schema/review", response_model=DatasetSchemaResponse)
+async def review_dataset_types(
+    dataset_id: str,
+    request: ReviewColumnsRequest = ReviewColumnsRequest(),
+    user: CurrentUser = Depends(get_current_user),
+) -> DatasetSchemaResponse:
+    return await service.ai_review_column_types(dataset_id, request.columns, user)
+
+
+@router.patch("/{dataset_id}/schema/columns/{column_name}", response_model=DatasetSchemaResponse)
+async def update_column(
+    dataset_id: str,
+    column_name: str,
+    request: UpdateColumnRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> DatasetSchemaResponse:
+    return await service.update_column(
+        dataset_id, column_name, category=request.category, alias=request.alias, user=user
+    )
+
+
+@router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)
+async def get_report_strategy(
+    dataset_id: str, user: CurrentUser = Depends(get_current_user)
+) -> ReportStrategyResponse:
+    return await service.generate_report_strategy(dataset_id, user)
+
+
+@router.post("/{dataset_id}/insights", response_model=InsightsResponse)
+async def get_chart_insights(
+    dataset_id: str,
+    request: GenerateInsightsRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> InsightsResponse:
+    return await service.generate_chart_insights(dataset_id, request, user)

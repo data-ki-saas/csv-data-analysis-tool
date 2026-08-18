@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/signup"];
+// "/" is the public marketing page; everything else needs auth unless listed here.
+const GUEST_ONLY_PATHS = ["/login", "/signup"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -27,11 +28,17 @@ export async function updateSession(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  const isPublicPath = PUBLIC_PATHS.some((path) => request.nextUrl.pathname.startsWith(path));
+  const { pathname } = request.nextUrl;
+  const isGuestOnlyPath = GUEST_ONLY_PATHS.some((path) => pathname.startsWith(path));
+  const isPublicPath = pathname === "/" || isGuestOnlyPath;
 
   if (!user && !isPublicPath) {
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Signed-in users don't need the marketing page or the sign-in/sign-up forms.
+  if (user && (pathname === "/" || isGuestOnlyPath)) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
   return response;

@@ -7,7 +7,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Which LLMProvider src.llm.client.get_llm_provider() returns: "anthropic" or "deepseek".
+    llm_provider: str = "anthropic"
+
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-5"
+
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-chat"
 
     # Local staging directory for streamed uploads before they're ingested by
     # DuckDB and pushed to R2. Nothing durable lives here.

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -7,7 +8,6 @@ import { createClient } from "@/lib/supabase/client";
 export default function LoginPage() {
   const router = useRouter();
 
-  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,10 +19,7 @@ export default function LoginPage() {
     setError(null);
 
     const supabase = createClient();
-    const { error } =
-      mode === "sign-in"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     setLoading(false);
 
@@ -31,15 +28,13 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/");
+    router.push("/dashboard");
     router.refresh();
   }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 px-4">
-      <h1 className="text-2xl font-semibold">
-        {mode === "sign-in" ? "Sign in" : "Create an account"}
-      </h1>
+      <h1 className="text-2xl font-semibold">Sign in</h1>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <input
@@ -67,17 +62,13 @@ export default function LoginPage() {
           disabled={loading}
           className="rounded bg-foreground px-3 py-2 text-background disabled:opacity-50"
         >
-          {loading ? "Please wait…" : mode === "sign-in" ? "Sign in" : "Sign up"}
+          {loading ? "Please wait…" : "Sign in"}
         </button>
       </form>
 
-      <button
-        type="button"
-        onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-        className="text-sm underline"
-      >
-        {mode === "sign-in" ? "Need an account? Sign up" : "Already have an account? Sign in"}
-      </button>
+      <Link href="/signup" className="text-sm underline">
+        Need an account? Sign up
+      </Link>
     </main>
   );
 }

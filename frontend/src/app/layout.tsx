@@ -13,9 +13,41 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SITE_URL = "https://csv-data-analysis-tool-one.vercel.app";
+
+// Site-wide defaults. Route-specific overrides live in each route's layout.tsx
+// (generated with backend/scripts/generate_seo.py — see CLAUDE.md).
 export const metadata: Metadata = {
-  title: "CSV Data Analysis Tool",
-  description: "Upload and explore CSV datasets with SQL, DuckDB, and Claude",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
+    template: "%s — CSV Data Analysis Tool",
+  },
+  description:
+    "Turn any CSV into business intelligence in seconds. Upload a file, get an instant schema and row-count preview, run SQL, and build interactive charts — no data warehouse required.",
+  keywords: [
+    "data intelligence",
+    "business intelligence",
+    "csv to charts",
+    "interactive charts",
+    "csv data analysis",
+    "sql query tool",
+    "data visualization",
+  ],
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    siteName: "CSV Data Analysis Tool",
+    title: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
+    description:
+      "Turn any CSV into business intelligence in seconds. Upload a file, run SQL, and build interactive charts.",
+  },
+  twitter: {
+    card: "summary",
+    title: "CSV Data Analysis Tool — Business Intelligence from CSV Files",
+    description:
+      "Turn any CSV into business intelligence in seconds. Upload a file, run SQL, and build interactive charts.",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,7 +55,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        {/* Applies the saved theme before paint, so there's no flash of the
+            default theme. Keep the storage key/shape in sync with
+            src/lib/theme.ts and theme-provider.tsx. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var raw=localStorage.getItem("csv-tool-theme");var mode="system",colorTheme="winter";if(raw){var parsed=JSON.parse(raw);mode=parsed.mode||mode;colorTheme=parsed.colorTheme||colorTheme;}var dark=mode==="dark"||(mode!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var root=document.documentElement;root.dataset.colorTheme=colorTheme;root.classList.toggle("dark",dark);}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
       </body>

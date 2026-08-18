@@ -9,6 +9,8 @@ from moto.server import ThreadedMotoServer
 from src.core.auth import CurrentUser, get_current_user
 from src.core.config import settings
 from src.datasets import repository
+from src.presentations import repository as presentations_repository
+from src.settings import repository as settings_repository
 
 TEST_USER = CurrentUser(id="test-user-id", email="test@example.com")
 
@@ -64,6 +66,19 @@ class FakeDatasetsTable:
             return None
         return repository.DatasetRecord(**row)
 
+    def update_schema(
+        self, dataset_id: str, owner_id: str, schema: list[dict]
+    ) -> repository.DatasetRecord | None:
+        row = self.rows.get(dataset_id)
+        if row is None or row["owner_id"] != owner_id:
+            return None
+        row["schema"] = schema
+        return repository.DatasetRecord(**row)
+
+    # NB: this method is named `list`, which shadows the builtin for any
+    # annotation written below it in this class body (Python resolves class-body
+    # annotations against the class namespace first) -- keep it as the last
+    # method defined, or any `list[...]` annotation after it breaks at import time.
     def list(self, owner_id: str) -> list[repository.DatasetRecord]:
         return [
             repository.DatasetRecord(**row)
@@ -88,6 +103,69 @@ def fake_datasets_table(monkeypatch):
     monkeypatch.setattr(repository, "get_dataset", table.get)
     monkeypatch.setattr(repository, "list_datasets", table.list)
     monkeypatch.setattr(repository, "delete_dataset", table.delete)
+    monkeypatch.setattr(repository, "update_dataset_schema", table.update_schema)
+    return table
+
+
+class FakeUserSettingsTable:
+    """In-memory stand-in for the Supabase `user_settings` table."""
+
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    def get(self, owner_id: str) -> settings_repository.UserSettingsRecord | None:
+        row = self.rows.get(owner_id)
+        if row is None:
+            return None
+        return settings_repository.UserSettingsRecord(**row)
+
+    def upsert(
+        self, *, owner_id: str, theme_mode: str, color_theme: str
+    ) -> settings_repository.UserSettingsRecord:
+        row = {"owner_id": owner_id, "theme_mode": theme_mode, "color_theme": color_theme}
+        self.rows[owner_id] = row
+        return settings_repository.UserSettingsRecord(**row)
+
+
+@pytest.fixture(autouse=True)
+def fake_user_settings_table(monkeypatch):
+    table = FakeUserSettingsTable()
+    monkeypatch.setattr(settings_repository, "get_settings", table.get)
+    monkeypatch.setattr(settings_repository, "upsert_settings", lambda **kwargs: table.upsert(**kwargs))
+    return table
+
+
+class FakePresentationsTable:
+    """In-memory stand-in for the Supabase `presentations` table."""
+
+    def __init__(self):
+        self.rows: dict[tuple[str, str], dict] = {}
+
+    def get(self, dataset_id: str, owner_id: str) -> presentations_repository.PresentationRecord | None:
+        row = self.rows.get((dataset_id, owner_id))
+        if row is None:
+            return None
+        return presentations_repository.PresentationRecord(**row)
+
+    def upsert(
+        self, *, dataset_id: str, owner_id: str, title: str, pages: list[dict]
+    ) -> presentations_repository.PresentationRecord:
+        row = {
+            "dataset_id": dataset_id,
+            "owner_id": owner_id,
+            "title": title,
+            "pages": pages,
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        self.rows[(dataset_id, owner_id)] = row
+        return presentations_repository.PresentationRecord(**row)
+
+
+@pytest.fixture(autouse=True)
+def fake_presentations_table(monkeypatch):
+    table = FakePresentationsTable()
+    monkeypatch.setattr(presentations_repository, "get_presentation", table.get)
+    monkeypatch.setattr(presentations_repository, "upsert_presentation", lambda **kwargs: table.upsert(**kwargs))
     return table
 
 
