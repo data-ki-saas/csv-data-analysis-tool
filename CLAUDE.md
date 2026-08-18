@@ -429,6 +429,27 @@ leaking existence of other users' datasets).
     / `usePinBlock`) always act on that card's **currently displayed** result — the
     original recommendation, or a filtered/rebinned one, whichever `result` the card is
     showing at the moment — not a stale copy from when the card first rendered.
+  - **Per-chart export** — "Download JPG"/"Download PDF" (also acting on the card's
+    currently-displayed result, via the same `toChartBlock()` helper the insights/pin
+    handlers' payload shape mirrors). Both are deliberately dependency-free and
+    server-free, reusing `staticChart.ts`'s existing SVG renderer (the same one the
+    standalone-HTML export and presentation-PDF print path use):
+    `src/lib/exportChartImage.ts`'s `downloadChartAsJpg()` rasterizes that SVG via an
+    off-screen canvas and triggers a blob download; `src/lib/exportChartPdf.ts`'s
+    `printChartAsPdf()` opens a dedicated popup window containing just that one SVG and
+    calls `window.print()` on it — the same browser-print mechanism the presentation
+    builder's "Export as PDF" button uses, just scoped to a single chart via an isolated
+    popup instead of print-only CSS across the whole current page (there's no need to
+    coordinate hiding every *other* chart card when each one already renders in its own
+    window). First two of a planned JPG → PDF → shareable-URL → MP4 set of export
+    options aimed at three audiences (YouTube/content creators, businesses, and
+    PPT/presentation embedding — see the SEO section). Still open: a shareable-URL
+    button (needs a new public, unauthenticated route plus an unguessable per-chart
+    share token the owner can generate/revoke — nothing shareable exists without an
+    explicit opt-in) and an animated MP4 export (needs a rendering-approach decision —
+    client-side `canvas.captureStream()`/`MediaRecorder` produces WebM natively, not
+    MP4, without a WASM encoder or server-side rendering, and the latter is a poor fit
+    for Render's free tier per the PDF-export reasoning above).
 - `/dashboard/[datasetId]/presentation` — the multi-page drag-and-drop report builder.
   Reorder pages, reorder blocks within a page, and move a block to a different page are
   all native HTML5 drag-and-drop (`draggable` + `dataTransfer`, see

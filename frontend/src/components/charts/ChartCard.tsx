@@ -6,6 +6,7 @@ import type { ChartRecommendation, QueryResponse } from "@/lib/api";
 import { queryDataset } from "@/lib/api";
 import { buildEffectiveSql, ChartFilter, DEFAULT_BIN_COUNT } from "@/lib/chartQueries";
 import { downloadChartAsJpg } from "@/lib/exportChartImage";
+import { printChartAsPdf } from "@/lib/exportChartPdf";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
 import { TimeSeriesChart } from "./TimeSeriesChart";
@@ -94,16 +95,24 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
     );
   }
 
-  function handleDownloadJpg(currentResult: QueryResponse) {
-    downloadChartAsJpg({
-      type: "chart",
+  function toChartBlock(currentResult: QueryResponse) {
+    return {
+      type: "chart" as const,
       id: recommendation.column,
       title: recommendation.title,
       chart_type: recommendation.chart_type,
       partition_type: recommendation.partition_type,
       column: recommendation.column,
       result: currentResult,
-    });
+    };
+  }
+
+  function handleDownloadJpg(currentResult: QueryResponse) {
+    downloadChartAsJpg(toChartBlock(currentResult));
+  }
+
+  function handleDownloadPdf(currentResult: QueryResponse) {
+    printChartAsPdf(toChartBlock(currentResult));
   }
 
   function handlePin(currentResult: QueryResponse) {
@@ -201,6 +210,9 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
             </button>
             <button type="button" onClick={() => handleDownloadJpg(result)} className="underline">
               Download JPG
+            </button>
+            <button type="button" onClick={() => handleDownloadPdf(result)} className="underline">
+              Download PDF
             </button>
           </div>
         </>
