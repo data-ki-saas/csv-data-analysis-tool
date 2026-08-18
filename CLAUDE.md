@@ -189,12 +189,46 @@ There is no top-level build/test command — the two halves are run independentl
     that no `datasets` row will ever reference — cleanup itself is best-effort and logs
     (rather than raises) on failure, so it can never mask the original error being
     returned to the client.
+  - **Upload dedup**: `_stream_upload_to_disk()` computes an MD5 of the upload's bytes
+    while streaming to disk (no extra read pass; not a security hash, just a
+    change-detection fingerprint, so MD5's speed over correctness is the right choice).
+    If `repository.get_dataset_by_content_hash(user.id, content_hash)` finds a match
+    (same owner, byte-identical content), `_create_deduplicated_dataset()` creates a
+    new `datasets` row — its own id, its own `filename`, its own entry in "Your
+    datasets" — but **shares** the matched row's `raw_key`/`parquet_key` R2 objects and
+    copies its `schema`/`health_score`/`row_count`/`report_strategy` forward, skipping
+    `duckdb_manager.ingest_and_export()` and `r2_client.upload_raw_file()` entirely.
+    Dedup is scoped per-owner (the content-hash lookup filters by `owner_id`), so
+    storage is only ever shared between one user's own duplicate uploads, never across
+    users. `delete_dataset()` correspondingly only deletes the R2 objects once
+    `repository.count_datasets_sharing_storage()` confirms no other row still
+    references them — checking `raw_key` alone is sufficient, since it and
+    `parquet_key` are always assigned or copied together as a pair, never
+    independently. Accepted race (this app's scale doesn't warrant solving it):
+    concurrent deletes of the last two sibling rows can each see the other still
+    present and both skip the R2 delete, leaking the objects — never the reverse
+    (deleting storage a surviving row still needs), which is the failure direction
+    that actually matters.
 - **Report Strategy Engine** (`src/datasets/strategy_engine.py`) — `POST
   /api/datasets/{id}/report-strategy` (`service.generate_report_strategy()`) asks the
   configured LLM provider (Anthropic by default) to recommend a prioritized set of
   charts for a dataset from its already-inferred schema, then actually runs each
-  recommendation's SQL before returning it. Nothing here is persisted — it's computed
-  fresh on each call, unlike the type-review endpoints which mutate the stored schema.
+  recommendation's SQL before returning it.
+  - **Cached, not recomputed on every call**: a dataset's Parquet never changes after
+    ingest, so the full result (recommendations + their already-executed SQL results)
+    is persisted on `datasets.report_strategy` and reused unless the request's
+    `force` flag (`ReportStrategyRequest`) is set or no cached result exists yet.
+    `repository.update_dataset_schema()` clears this cache back to `NULL` in the same
+    statement as any schema write (AI review or a user's category override), since
+    recommendations are derived from column categories — a stale cache must not
+    survive a schema edit. The zero-chartable-columns case persists an actual `[]`
+    (via `update_dataset_report_strategy()`) rather than leaving the column `NULL`,
+    so it reads as "generated, nothing chartable" instead of looking identical to
+    "never generated" on the next check. On the frontend, the single "Generate visual
+    report" / "Regenerate report" button (same label logic as before) now passes
+    `force: recommendations.length > 0` — the first click is happy to take a cache
+    hit, a later click while recommendations are already shown forces a fresh LLM
+    call + SQL re-run and overwrites the cache.
   - `strategy_engine.SYSTEM_PROMPT` encodes the three requirements as prompt rules:
     prioritize datetime columns (time-series line charts) over numerical (binned
     histogram/bell-curve) over categorical (pie ≤6 distinct values, else bar); DuckDB
@@ -230,6 +264,18 @@ There is no top-level build/test command — the two halves are run independentl
   `strategy_engine.py`, a malformed response (`json.JSONDecodeError`, non-list JSON)
   propagates as a hard error rather than degrading to a partial result: there's no
   per-item structure here to salvage, just a flat list of strings.
+  - **Cached permanently, per exact chart view** — `src/datasets/insights_cache_repository.py`
+    (a `chart_insights_cache` table, not a column on `datasets`: there can be many
+    entries per dataset, one per distinct view). `service._insights_cache_key()` hashes
+    `{column, chart_type, partition_type, result: {columns, rows}}` — NOT the whole
+    dataset, since the same column viewed through a different filter/bin state produces
+    different aggregated data (and so, potentially, different insight text) — and
+    deliberately excludes `title`, even though `build_prompt()` interpolates it into the
+    prompt: a renamed column alias changing a chart's displayed title could serve
+    stale-titled insight text on a hit, an accepted tradeoff (the system prompt already
+    tells the model not to restate the title verbatim) rather than an oversight. Unlike
+    `report_strategy` above, this cache is never invalidated — the Parquet data behind
+    one specific aggregation never changes, so a hit is valid forever.
 - **Presentations** (`src/presentations/`, mirrors the `settings/` package layout) — one
   presentation per (dataset, owner) — see the `unique (dataset_id, owner_id)` constraint
   in the migration — holding an ordered `pages` → `blocks` document (`chart` | `insights`
@@ -277,7 +323,12 @@ Tests don't hit real Supabase or real R2:
   `list` — any method defined *after* it that annotates a bare `list[...]` breaks at
   import time, because Python resolves a class body's annotations against the class's
   own namespace first, and `list` is now that method. Keep `list` last, or annotate
-  with `builtins.list[...]` if you must add something after it.
+  with `builtins.list[...]` if you must add something after it. It also fakes the
+  dedup/caching lookups (`get_by_content_hash`, `count_sharing_storage`,
+  `update_report_strategy`) directly against its in-memory `rows` dict, and
+  `update_schema` mirrors the real function's atomic `report_strategy` cache
+  invalidation. `FakeChartInsightsCacheTable` (same file) is the equivalent stand-in
+  for the `chart_insights_cache` table.
 - LLM-calling code (`type_review.py`'s `suggest_column_categories()`,
   `strategy_engine.py`'s `suggest_visual_strategy()`, `scripts/generate_seo.py`'s
   `generate_metadata()`) is tested with a small in-file fake implementing

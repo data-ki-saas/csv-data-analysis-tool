@@ -4,7 +4,7 @@ import { generateReportStrategy } from "@/lib/api";
 export function useReportStrategy(datasetId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => generateReportStrategy(datasetId),
+    mutationFn: (force: boolean) => generateReportStrategy(datasetId, force),
     onSuccess: (data) => {
       queryClient.setQueryData(["reportStrategy", datasetId], data);
     },

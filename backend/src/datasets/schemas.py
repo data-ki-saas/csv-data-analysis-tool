@@ -104,6 +104,15 @@ class ReportStrategyResponse(BaseModel):
     recommendations: list[ChartRecommendation]
 
 
+class ReportStrategyRequest(BaseModel):
+    # False (default): serve a cached result if one exists (no LLM call, no
+    # SQL re-run) -- what the frontend's initial "Generate visual report"
+    # click sends. True: always recompute and overwrite the cache -- what
+    # the "Regenerate report" click (shown once recommendations already
+    # exist) sends.
+    force: bool = False
+
+
 class GenerateInsightsRequest(BaseModel):
     title: str
     chart_type: str

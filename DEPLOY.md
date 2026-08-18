@@ -29,7 +29,8 @@ Deploy in this order — each later step needs credentials from an earlier one.
 
 1. Create a new Supabase project.
 2. Apply every migration in `supabase/migrations/` **in order**, via the SQL Editor
-   or `supabase db push`:
+   or `supabase db push` (one-time, to get the project to current — the GitHub
+   integration below takes over from here for every future migration):
    - `0001_create_datasets.sql` — `datasets` table (owner, filename, schema jsonb,
      row count, R2 storage keys) + RLS policies.
    - `0002_create_user_settings.sql` — `user_settings` table (theme mode/color) +
@@ -37,6 +38,12 @@ Deploy in this order — each later step needs credentials from an earlier one.
    - `0003_add_health_score_to_datasets.sql` — adds `health_score` to `datasets`.
    - `0004_create_presentations.sql` — `presentations` table (drag-and-drop report
      builder documents) + RLS policies.
+   - `0005_add_content_hash_to_datasets.sql` — adds `content_hash` (MD5) to `datasets`,
+     for upload dedup.
+   - `0006_add_report_strategy_to_datasets.sql` — adds cached `report_strategy` jsonb
+     to `datasets`.
+   - `0007_create_chart_insights_cache.sql` — `chart_insights_cache` table (permanent
+     per-chart-view insights cache) + RLS policies.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.
@@ -47,6 +54,35 @@ Deploy in this order — each later step needs credentials from an earlier one.
    | Project URL | `<SUPABASE_URL>` |
    | `anon` `public` key | `<SUPABASE_ANON_KEY>` |
    | `service_role` key (⚠️ secret — backend only, never ship to the frontend) | `<SUPABASE_SERVICE_ROLE_KEY>` |
+
+### 1a. Auto-deploying migrations on push (recommended, do this once)
+
+Rather than re-running step 2 by hand for every future migration, connect this repo
+to Supabase so anything added to `supabase/migrations/` deploys automatically when
+pushed to `main`. Available on every plan, including free — no CLI linking or
+`supabase/config.toml` required for this repo, since `supabase/migrations/` already
+exists at the repo root in the shape the integration expects.
+
+1. In the Supabase dashboard: **Project Settings > Integrations > GitHub Integration
+   > Authorize GitHub**, and complete the GitHub OAuth prompt.
+2. Select this repo (`data-ki-saas/csv-data-analysis-tool`).
+3. Set **Working directory** to `.` — the path from the repo root to the directory
+   *containing* `supabase/` (root, in this repo's layout).
+4. Set the **production branch** to `main`.
+5. Enable **Deploy to production**, then **Enable integration**. From this point on,
+   every push/merge to `main` that touches `supabase/migrations/` auto-applies the
+   new migration(s) — only files under `migrations/` are run; `config.toml`/seed
+   files are ignored unless present.
+6. Optional but recommended once you're merging via pull requests instead of pushing
+   directly to `main`: in **GitHub > repo Settings > Branches > branch protection
+   rule for `main`**, enable **Require status checks to pass before merging** and
+   require the **Supabase Preview** check — this blocks a PR with a bad migration
+   from merging instead of failing silently after the fact.
+
+**Verify it worked**: push a trivial no-op migration (or just watch the next real
+one) and check **Database > Migrations** in the Supabase dashboard, or the
+integration's run log under **Project Settings > Integrations**, for a successful
+deploy tied to your commit SHA.
 
 ---
 

@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Which LLMProvider src.llm.client.get_llm_provider() returns: "anthropic" or "deepseek".
+    # Override per environment via the LLM_PROVIDER env var (.env locally, a Render
+    # env var in production) -- this default is only the local/test fallback.
     llm_provider: str = "anthropic"
 
     anthropic_api_key: str = ""

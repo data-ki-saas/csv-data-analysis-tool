@@ -34,7 +34,7 @@ export default function ReportsPage() {
           </div>
           <button
             type="button"
-            onClick={() => strategy.mutate()}
+            onClick={() => strategy.mutate(recommendations.length > 0)}
             disabled={strategy.isPending}
             className="rounded bg-accent px-4 py-2 text-sm text-accent-foreground disabled:opacity-50"
           >

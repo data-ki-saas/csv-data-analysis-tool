@@ -171,7 +171,9 @@ async def test_report_strategy_for_unknown_dataset_returns_404(client):
     assert response.status_code == 404
 
 
-async def test_report_strategy_with_no_chartable_columns_returns_empty_list(client, tmp_path, monkeypatch):
+async def test_report_strategy_with_no_chartable_columns_returns_empty_list(
+    client, tmp_path, monkeypatch, fake_datasets_table
+):
     csv_path = tmp_path / "all_free_text.csv"
     rows = "\n".join(
         f"row{i},This is a fairly long free-form comment used only to pad average length past forty characters {i}."
@@ -188,3 +190,58 @@ async def test_report_strategy_with_no_chartable_columns_returns_empty_list(clie
     assert response.status_code == 200
     assert response.json()["recommendations"] == []
     assert provider.prompts == []
+    # Persisted as [] (not left NULL) so this reliably reads as "generated,
+    # nothing chartable" rather than a permanent cache-miss.
+    assert fake_datasets_table.rows[dataset_id]["report_strategy"] == []
+
+
+async def test_report_strategy_serves_cache_without_llm_or_sql_on_second_call(
+    client, mixed_csv_path, monkeypatch
+):
+    dataset_id = await _upload(client, mixed_csv_path)
+    provider = FakeProvider(json.dumps(_VALID_RECOMMENDATIONS))
+    monkeypatch.setattr(service, "get_llm_provider", lambda: provider)
+
+    first = await client.post(f"/api/datasets/{dataset_id}/report-strategy")
+    second = await client.post(f"/api/datasets/{dataset_id}/report-strategy")
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["recommendations"] == second.json()["recommendations"]
+    assert len(provider.prompts) == 1  # the second call never touched the LLM
+
+
+async def test_report_strategy_force_bypasses_cache_and_recomputes(client, mixed_csv_path, monkeypatch):
+    dataset_id = await _upload(client, mixed_csv_path)
+    provider = FakeProvider(json.dumps(_VALID_RECOMMENDATIONS))
+    monkeypatch.setattr(service, "get_llm_provider", lambda: provider)
+
+    await client.post(f"/api/datasets/{dataset_id}/report-strategy")
+
+    # Change what the (fake) model would return, then force a recompute.
+    single_recommendation = [_VALID_RECOMMENDATIONS[0]]
+    provider._response = json.dumps(single_recommendation)
+
+    response = await client.post(f"/api/datasets/{dataset_id}/report-strategy", json={"force": True})
+    assert response.status_code == 200
+    assert len(response.json()["recommendations"]) == 1
+    assert len(provider.prompts) == 2  # force made a second real LLM call
+
+
+async def test_report_strategy_cache_invalidated_by_schema_update(client, mixed_csv_path, monkeypatch):
+    dataset_id = await _upload(client, mixed_csv_path)
+    provider = FakeProvider(json.dumps(_VALID_RECOMMENDATIONS))
+    monkeypatch.setattr(service, "get_llm_provider", lambda: provider)
+
+    await client.post(f"/api/datasets/{dataset_id}/report-strategy")
+    assert len(provider.prompts) == 1
+
+    # A column category override invalidates the cached report-strategy,
+    # since recommendations are derived from column categories.
+    patch_response = await client.patch(
+        f"/api/datasets/{dataset_id}/schema/columns/plan", json={"category": "free_text"}
+    )
+    assert patch_response.status_code == 200
+
+    response = await client.post(f"/api/datasets/{dataset_id}/report-strategy")
+    assert response.status_code == 200
+    assert len(provider.prompts) == 2  # cache miss after invalidation -> LLM called again

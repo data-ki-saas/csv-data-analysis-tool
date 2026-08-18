@@ -7,6 +7,7 @@ from src.datasets.schemas import (
     DatasetSchemaResponse,
     GenerateInsightsRequest,
     InsightsResponse,
+    ReportStrategyRequest,
     ReportStrategyResponse,
     ReviewColumnsRequest,
     UpdateColumnRequest,
@@ -70,9 +71,11 @@ async def update_column(
 
 @router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)
 async def get_report_strategy(
-    dataset_id: str, user: CurrentUser = Depends(get_current_user)
+    dataset_id: str,
+    request: ReportStrategyRequest = ReportStrategyRequest(),
+    user: CurrentUser = Depends(get_current_user),
 ) -> ReportStrategyResponse:
-    return await service.generate_report_strategy(dataset_id, user)
+    return await service.generate_report_strategy(dataset_id, request.force, user)
 
 
 @router.post("/{dataset_id}/insights", response_model=InsightsResponse)

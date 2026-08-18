@@ -172,10 +172,11 @@ export interface ReportStrategy {
   recommendations: ChartRecommendation[];
 }
 
-export async function generateReportStrategy(datasetId: string) {
+export async function generateReportStrategy(datasetId: string, force = false) {
   const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}/report-strategy`, {
     method: "POST",
-    headers: await authHeader(),
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify({ force }),
   });
   return handleResponse<ReportStrategy>(response);
 }

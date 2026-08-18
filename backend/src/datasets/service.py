@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import uuid
 from dataclasses import asdict
@@ -9,7 +11,7 @@ from fastapi import HTTPException, UploadFile
 
 from src.core.auth import CurrentUser
 from src.core.config import settings
-from src.datasets import repository
+from src.datasets import insights_cache_repository, repository
 from src.datasets.duckdb_manager import MalformedCsvError, QueryResult, UnsafeQueryError, duckdb_manager
 from src.datasets.profiling import CONFIDENCE_REVIEW_THRESHOLD
 from src.datasets.insights import generate_insights
@@ -48,8 +50,14 @@ def _cleanup_orphaned_objects(*keys: str) -> None:
             logger.exception("failed to clean up orphaned R2 object %r after a failed upload", key)
 
 
-async def _stream_upload_to_disk(file: UploadFile, destination: Path) -> None:
+async def _stream_upload_to_disk(file: UploadFile, destination: Path) -> str:
+    """Streams the upload to disk in chunks and returns the MD5 hex digest of
+    its bytes, computed over the same chunks as they're written -- no extra
+    read pass. Used for upload dedup (see ingest_csv_upload); not a security
+    hash, just a change-detection fingerprint, so MD5's speed is preferable
+    to a stronger algorithm here."""
     written = 0
+    digest = hashlib.md5()
     async with aiofiles.open(destination, "wb") as out:
         while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
             written += len(chunk)
@@ -58,9 +66,64 @@ async def _stream_upload_to_disk(file: UploadFile, destination: Path) -> None:
                     status_code=413,
                     detail=f"File exceeds the {settings.max_upload_size_mb} MB upload limit",
                 )
+            digest.update(chunk)
             await out.write(chunk)
     if written == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    return digest.hexdigest()
+
+
+async def _create_deduplicated_dataset(
+    matched: repository.DatasetRecord, filename: str, content_hash: str, user: CurrentUser
+) -> UploadResponse:
+    """Byte-identical content to `matched` was just uploaded by the same
+    owner -- create a new dataset row (its own id/filename, its own entry in
+    "Your datasets") that shares `matched`'s R2 storage instead of re-parsing
+    and re-uploading. Also copies `matched`'s already-computed schema/health
+    and any cached report_strategy forward, since they'd be identical anyway.
+    Deliberately does NOT run `_cleanup_orphaned_objects` on failure below --
+    unlike the fresh-ingest path, no new R2 objects were written here, so
+    there's nothing of this request's own to clean up (and cleaning up
+    `matched`'s objects would break the dataset(s) still relying on them)."""
+    preview = await duckdb_manager.preview_dataset(matched.parquet_key)
+    try:
+        record = repository.create_dataset(
+            owner_id=user.id,
+            filename=filename,
+            row_count=matched.row_count,
+            schema=matched.schema,
+            raw_key=matched.raw_key,
+            parquet_key=matched.parquet_key,
+            health_score=matched.health_score,
+            content_hash=content_hash,
+            report_strategy=matched.report_strategy,
+        )
+    except Exception as exc:
+        logger.exception(
+            "upload (deduplicated) failed to save dataset metadata: user=%s filename=%r", user.id, filename
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Your file was processed but we couldn't save it. Please try again.",
+        ) from exc
+
+    logger.info(
+        "upload complete (deduplicated): user=%s dataset_id=%s matched_dataset_id=%s filename=%r row_count=%d",
+        user.id,
+        record.id,
+        matched.id,
+        filename,
+        record.row_count,
+    )
+
+    return UploadResponse(
+        dataset_id=record.id,
+        filename=record.filename,
+        row_count=record.row_count,
+        health_score=record.health_score,
+        schema=[ColumnInfo(**col) for col in record.schema],
+        preview=DatasetPreview(columns=preview.columns, rows=preview.rows),
+    )
 
 
 async def ingest_csv_upload(file: UploadFile, user: CurrentUser) -> UploadResponse:
@@ -75,7 +138,17 @@ async def ingest_csv_upload(file: UploadFile, user: CurrentUser) -> UploadRespon
     logger.info("upload start: user=%s filename=%r", user.id, file.filename)
 
     try:
-        await _stream_upload_to_disk(file, tmp_csv_path)
+        content_hash = await _stream_upload_to_disk(file, tmp_csv_path)
+
+        matched = repository.get_dataset_by_content_hash(user.id, content_hash)
+        if matched is not None:
+            logger.info(
+                "upload deduplicated: user=%s filename=%r matched_dataset_id=%s",
+                user.id,
+                file.filename,
+                matched.id,
+            )
+            return await _create_deduplicated_dataset(matched, file.filename, content_hash, user)
 
         try:
             result = duckdb_manager.ingest_and_export(tmp_csv_path, parquet_key)
@@ -124,6 +197,7 @@ async def ingest_csv_upload(file: UploadFile, user: CurrentUser) -> UploadRespon
             raw_key=raw_key,
             parquet_key=parquet_key,
             health_score=result.health_score,
+            content_hash=content_hash,
         )
     except Exception as exc:
         logger.exception(
@@ -185,8 +259,16 @@ def delete_dataset(dataset_id: str, user: CurrentUser) -> None:
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    r2_client.delete_object(record.raw_key)
-    r2_client.delete_object(record.parquet_key)
+    # A deduplicated upload (see ingest_csv_upload) shares its raw_key/parquet_key
+    # with another dataset row -- only delete the R2 objects once no other row
+    # still references them. Accepted race (personal-scale app, not solved
+    # here): two concurrent deletes of the last two sibling rows can each see
+    # a nonzero count and both skip the R2 delete, leaking the objects -- never
+    # the reverse (deleting storage a surviving row still needs), which is the
+    # failure direction that actually matters.
+    if repository.count_datasets_sharing_storage(dataset_id, record.raw_key) == 0:
+        r2_client.delete_object(record.raw_key)
+        r2_client.delete_object(record.parquet_key)
     repository.delete_dataset(dataset_id, user.id)
 
 
@@ -344,11 +426,22 @@ async def update_column(
     return _to_schema_response(updated_record, preview)
 
 
-async def generate_report_strategy(dataset_id: str, user: CurrentUser) -> ReportStrategyResponse:
+async def generate_report_strategy(
+    dataset_id: str, force: bool, user: CurrentUser
+) -> ReportStrategyResponse:
     """Ask the configured LLM provider for a prioritized set of chart
     recommendations (see strategy_engine.SYSTEM_PROMPT for the datetime ->
     numerical -> categorical ordering and chart-matching rules), then execute
     each recommendation's SQL for real before returning it.
+
+    A dataset's Parquet data never changes after ingest, so the full result
+    (recommendations + their already-executed SQL results) is cached on the
+    `datasets` row (`report_strategy`) and reused here unless `force` is set
+    or no cached result exists yet -- `update_dataset_schema` clears this
+    cache whenever column categories change, since recommendations are
+    derived from them. `force=True` is what the frontend's "Regenerate
+    report" click sends (vs. the initial "Generate visual report" click,
+    which is happy to take a cache hit).
 
     Free-text columns are excluded before the prompt is even built — there's
     no meaningful aggregate chart for a comments/description column, so
@@ -362,10 +455,20 @@ async def generate_report_strategy(dataset_id: str, user: CurrentUser) -> Report
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    if not force and record.report_strategy is not None:
+        cached_recommendations = [ChartRecommendation(**r) for r in record.report_strategy]
+        return ReportStrategyResponse(
+            dataset_id=record.id, filename=record.filename, recommendations=cached_recommendations
+        )
+
     columns = [ColumnInfo(**col) for col in record.schema]
     chartable = [col for col in columns if col.category != "free_text"]
 
     if not chartable:
+        # Persisted explicitly (not just returned) so `report_strategy` reads
+        # as "generated, nothing chartable" ('[]') rather than looking
+        # identical to "never generated" (NULL) on the next cache check.
+        repository.update_dataset_report_strategy(dataset_id, user.id, [])
         return ReportStrategyResponse(dataset_id=record.id, filename=record.filename, recommendations=[])
 
     preview = await duckdb_manager.preview_dataset(record.parquet_key)
@@ -417,9 +520,37 @@ async def generate_report_strategy(dataset_id: str, user: CurrentUser) -> Report
             )
         )
 
+    repository.update_dataset_report_strategy(
+        dataset_id, user.id, [r.model_dump(mode="json") for r in recommendations]
+    )
+
     return ReportStrategyResponse(
         dataset_id=record.id, filename=record.filename, recommendations=recommendations
     )
+
+
+def _insights_cache_key(request: GenerateInsightsRequest) -> str:
+    """Keyed by the exact chart view -- column/chart_type/partition_type plus
+    the aggregated result's columns+rows -- NOT the whole dataset, since the
+    same column can be viewed through many different filter/bin states, each
+    producing different aggregated data (and so, potentially, different
+    insight text). Deliberately excludes `title`: insights.py's build_prompt()
+    does interpolate the title into the prompt, so a renamed column alias
+    changing a chart's displayed title could serve stale-titled insight text
+    on a cache hit -- an accepted tradeoff (the system prompt already tells
+    the model not to restate the title verbatim, so the practical risk is
+    low), not an oversight."""
+    canonical = json.dumps(
+        {
+            "column": request.column,
+            "chart_type": request.chart_type,
+            "partition_type": request.partition_type,
+            "result": {"columns": request.result.columns, "rows": request.result.rows},
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 async def generate_chart_insights(
@@ -428,14 +559,28 @@ async def generate_chart_insights(
     """The chart's aggregated data comes straight from the request body (the
     frontend already has it, whether from the original report-strategy
     result or a client-rebuilt fast-aggregation query) -- this only checks
-    dataset ownership, it never re-runs SQL itself."""
+    dataset ownership, it never re-runs SQL itself.
+
+    Results are cached permanently per exact chart view (see
+    _insights_cache_key) -- unlike report_strategy, there's no invalidation
+    path here: the Parquet data behind any one specific aggregation never
+    changes, so a cache hit is valid forever."""
     record = repository.get_dataset(dataset_id, user.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+
+    cache_key = _insights_cache_key(request)
+    cached = insights_cache_repository.get_cached_insights(dataset_id, cache_key)
+    if cached is not None:
+        return InsightsResponse(insights=cached.insights)
 
     try:
         insights = await generate_insights(request.model_dump(), get_llm_provider())
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Insight generation failed: {exc}") from exc
+
+    insights_cache_repository.save_insights_cache(
+        dataset_id=dataset_id, owner_id=user.id, cache_key=cache_key, insights=insights
+    )
 
     return InsightsResponse(insights=insights)
