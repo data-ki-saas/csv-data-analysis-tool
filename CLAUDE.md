@@ -462,6 +462,14 @@ leaking existence of other users' datasets).
     / `usePinBlock`) always act on that card's **currently displayed** result — the
     original recommendation, or a filtered/rebinned one, whichever `result` the card is
     showing at the moment — not a stale copy from when the card first rendered.
+  - Every action on a `ChartCard` (insights/pin/download/share, plus a fullscreen
+    toggle) is an icon-only `IconButton` (`src/components/IconButton.tsx`) with a
+    hover tooltip showing its name — hand-rolled SVG icons and a pure-Tailwind
+    tooltip, no icon or tooltip library dependency, matching this codebase's existing
+    aversion to new deps for presentational concerns. Fullscreen uses the real
+    Fullscreen API (`element.requestFullscreen()`/`document.exitFullscreen()`) on the
+    card's own container (not the whole page), tracked via a `fullscreenchange`
+    listener rather than assuming the toggle succeeded synchronously.
   - **Per-chart export** — "Download JPG"/"Download PDF" (also acting on the card's
     currently-displayed result, via the same `toChartBlock()` helper the insights/pin
     handlers' payload shape mirrors). Both are deliberately dependency-free and

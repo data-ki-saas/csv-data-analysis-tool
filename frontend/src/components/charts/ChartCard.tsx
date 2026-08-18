@@ -1,15 +1,28 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ChartRecommendation, ChartShare, QueryResponse } from "@/lib/api";
 import { queryDataset } from "@/lib/api";
 import { buildEffectiveSql, ChartFilter, DEFAULT_BIN_COUNT } from "@/lib/chartQueries";
+import { cn } from "@/lib/utils";
 import { downloadChartAsJpg } from "@/lib/exportChartImage";
 import { printChartAsPdf } from "@/lib/exportChartPdf";
 import { useCreateChartShare, useRevokeChartShare } from "@/hooks/useChartShare";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
+import {
+  CopyIcon,
+  IconButton,
+  InsightsIcon,
+  JpgIcon,
+  MaximizeIcon,
+  MinimizeIcon,
+  PdfIcon,
+  PinIcon,
+  RevokeIcon,
+  ShareIcon,
+} from "@/components/IconButton";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 import { HistogramChart } from "./HistogramChart";
 import { CategoricalChart } from "./CategoricalChart";
@@ -31,11 +44,29 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
   const [binCount, setBinCount] = useState<number | null>(null);
   const [insights, setInsights] = useState<string[] | null>(null);
   const [share, setShare] = useState<ChartShare | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const generateInsights = useGenerateInsights(datasetId);
   const pin = usePinBlock(datasetId);
   const createShare = useCreateChartShare(datasetId);
   const revokeShare = useRevokeChartShare(datasetId);
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  function handleToggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      containerRef.current?.requestFullscreen();
+    }
+  }
 
   const sql = useMemo(
     () => buildEffectiveSql(recommendation, filter, binCount),
@@ -160,15 +191,29 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded border border-border bg-surface p-4">
+    <div
+      ref={containerRef}
+      className={cn(
+        "flex flex-col gap-3 rounded border border-border bg-surface p-4",
+        isFullscreen && "justify-center p-10"
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-medium">{recommendation.title}</h3>
           {recommendation.rationale && <p className="text-xs opacity-60">{recommendation.rationale}</p>}
         </div>
-        <span className="shrink-0 rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
-          {PARTITION_LABELS[recommendation.partition_type] ?? recommendation.partition_type}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
+            {PARTITION_LABELS[recommendation.partition_type] ?? recommendation.partition_type}
+          </span>
+          <IconButton
+            label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            onClick={handleToggleFullscreen}
+          >
+            {isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}
+          </IconButton>
+        </div>
       </div>
 
       {loading && <p className="py-10 text-center text-sm opacity-60">Updating…</p>}
@@ -219,56 +264,48 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs">
-            <button
-              type="button"
+          <div className="flex flex-wrap items-center gap-1 border-t border-border pt-2">
+            <IconButton
+              label={generateInsights.isPending ? "Generating…" : insights ? "Regenerate insights" : "Generate insights"}
               onClick={() => handleGenerateInsights(result)}
               disabled={generateInsights.isPending}
-              className="underline disabled:opacity-50"
             >
-              {generateInsights.isPending
-                ? "Generating…"
-                : insights
-                  ? "Regenerate insights"
-                  : "Generate insights"}
-            </button>
-            <button
-              type="button"
+              <InsightsIcon />
+            </IconButton>
+            <IconButton
+              label={pin.isPending ? "Pinning…" : pin.isSuccess ? "Pinned" : "Pin to presentation"}
               onClick={() => handlePin(result)}
               disabled={pin.isPending}
-              className="underline disabled:opacity-50"
             >
-              {pin.isPending ? "Pinning…" : pin.isSuccess ? "Pinned ✓" : "Pin to presentation"}
-            </button>
-            <button type="button" onClick={() => handleDownloadJpg(result)} className="underline">
-              Download JPG
-            </button>
-            <button type="button" onClick={() => handleDownloadPdf(result)} className="underline">
-              Download PDF
-            </button>
+              <PinIcon />
+            </IconButton>
+            <IconButton label="Download JPG" onClick={() => handleDownloadJpg(result)}>
+              <JpgIcon />
+            </IconButton>
+            <IconButton label="Download PDF" onClick={() => handleDownloadPdf(result)}>
+              <PdfIcon />
+            </IconButton>
             {!share ? (
-              <button
-                type="button"
+              <IconButton
+                label={createShare.isPending ? "Creating link…" : "Share"}
                 onClick={() => handleShare(result)}
                 disabled={createShare.isPending}
-                className="underline disabled:opacity-50"
               >
-                {createShare.isPending ? "Creating link…" : "Share"}
-              </button>
+                <ShareIcon />
+              </IconButton>
             ) : (
-              <span className="flex items-center gap-2">
-                <button type="button" onClick={handleCopyShareLink} className="underline">
-                  Copy share link
-                </button>
-                <button
-                  type="button"
+              <>
+                <IconButton label="Copy share link" onClick={handleCopyShareLink}>
+                  <CopyIcon />
+                </IconButton>
+                <IconButton
+                  label={revokeShare.isPending ? "Revoking…" : "Revoke share link"}
                   onClick={handleRevokeShare}
                   disabled={revokeShare.isPending}
-                  className="underline disabled:opacity-50"
                 >
-                  {revokeShare.isPending ? "Revoking…" : "Revoke"}
-                </button>
-              </span>
+                  <RevokeIcon />
+                </IconButton>
+              </>
             )}
           </div>
         </>
