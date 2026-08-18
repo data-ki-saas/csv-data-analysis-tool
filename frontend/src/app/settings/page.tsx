@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/theme-provider";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import {
@@ -38,7 +37,6 @@ function toggleEnabled<T extends { id: string; enabled: boolean }>(presets: T[],
 }
 
 export default function SettingsPage() {
-  const router = useRouter();
   const { mode, colorTheme, setMode, setColorTheme } = useTheme();
   const updateSettings = useUpdateSettings();
   const settingsQuery = useSettings();
@@ -143,12 +141,7 @@ export default function SettingsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <button onClick={() => router.push("/dashboard")} className="text-sm underline">
-          Back
-        </button>
-      </div>
+      <h1 className="text-2xl font-semibold">Settings</h1>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Appearance</h2>

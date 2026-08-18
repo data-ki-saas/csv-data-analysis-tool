@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { ColumnCategory, ColumnInfo } from "@/lib/api";
@@ -101,12 +100,7 @@ export default function ColumnTypesPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Column Types</h1>
-        <Link href="/dashboard" className="text-sm underline">
-          Back to dashboard
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">Column Types</h1>
 
       {schema.isLoading && <p className="text-sm opacity-70">Loading…</p>}
       {schema.isError && (

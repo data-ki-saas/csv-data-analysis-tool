@@ -1,0 +1,62 @@
+{
+  "about": {
+    "title": "About Us",
+    "sections": [
+      {
+        "heading": "Our Mission",
+        "body": "CSV Data Analysis Tool exists to make business intelligence accessible to anyone with a spreadsheet -- no data warehouse, no BI consultant, no weeks-long setup. Upload a CSV and get an instant schema, SQL querying, and interactive charts in seconds."
+      },
+      {
+        "heading": "Our Story",
+        "body": "We started this project because too many teams have data trapped in CSV exports with no easy way to explore it -- just a spreadsheet and a lot of manual scrolling. We built the tool we wished existed: upload, get intelligence, done."
+      },
+      {
+        "heading": "What We Believe",
+        "body": "Good data tools shouldn't require a data engineering team to operate. We're committed to keeping the core experience fast, free to start, and genuinely useful from the first upload."
+      }
+    ]
+  },
+  "contact": {
+    "title": "Contact Us",
+    "email": "hello@example.com",
+    "sections": [
+      {
+        "heading": "Get in Touch",
+        "body": "Have a question, found a bug, or want to suggest a feature? We'd love to hear from you. Reach us at the email address below and we'll get back to you as soon as we can."
+      },
+      {
+        "heading": "Support",
+        "body": "For account or billing questions, please include the email address associated with your account so we can find you faster."
+      }
+    ]
+  },
+  "documentation": {
+    "title": "Documentation",
+    "sections": [
+      {
+        "heading": "Getting Started",
+        "body": "Create a free account, then upload a CSV from your dashboard. We'll parse it, infer a schema, and show you a preview -- usually in a couple of seconds, even for large files."
+      },
+      {
+        "heading": "Uploading a CSV",
+        "body": "Drag and drop or select a CSV file up to the configured size limit. We automatically detect column types (dates, numbers, categories, free text), normalize common null values, and compute a data-quality health score."
+      },
+      {
+        "heading": "Reviewing Column Types",
+        "body": "Every column gets a best-guess category. Columns we're unsure about are flagged for review -- you can accept our AI's suggestion, override it yourself, or rename a column's display label at any time."
+      },
+      {
+        "heading": "Running SQL Queries",
+        "body": "Once a dataset is uploaded, query it directly with SQL. Queries run against the underlying data engine and return results in real time, with no need to export to another tool."
+      },
+      {
+        "heading": "Visual Reports & Dashboards",
+        "body": "Generate a prioritized set of chart recommendations for any dataset with one click -- time series, histograms, and category breakdowns, each backed by real query results you can filter and drill into."
+      },
+      {
+        "heading": "Exporting & Sharing",
+        "body": "Download any chart as a JPG or PDF, export a full presentation as a standalone HTML file or PDF, or generate a shareable read-only link anyone can view without an account. Add your own logo and footer branding from Settings."
+      }
+    ]
+  }
+}

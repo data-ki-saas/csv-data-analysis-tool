@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { ChartCard } from "@/components/charts/ChartCard";
@@ -19,12 +18,7 @@ export default function ReportsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Visual Reports</h1>
-        <Link href="/dashboard" className="text-sm underline">
-          Back to dashboard
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">Visual Reports</h1>
 
       {schema.data && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded border border-border p-4">

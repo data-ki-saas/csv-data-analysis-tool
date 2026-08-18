@@ -88,21 +88,6 @@ export default function MarketingPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
       />
       <main className="mx-auto flex w-full max-w-4xl flex-col gap-16 px-4 py-16">
-        <header className="flex items-center justify-between">
-          <span className="text-lg font-semibold">CSV Data Analysis Tool</span>
-          <nav className="flex items-center gap-4 text-sm">
-            <Link href="/login" className="underline">
-              Sign in
-            </Link>
-            <Link
-              href="/signup"
-              className="rounded bg-accent px-3 py-1.5 text-accent-foreground"
-            >
-              Sign up free
-            </Link>
-          </nav>
-        </header>
-
         <section className="flex flex-col gap-6 text-center">
           <h1 className="text-4xl font-semibold sm:text-5xl">
             Turn any CSV into charts, insights, and content

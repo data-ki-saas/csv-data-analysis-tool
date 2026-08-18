@@ -1,25 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useUploadDataset } from "@/hooks/useUploadDataset";
 import { useDatasets } from "@/hooks/useDatasets";
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const upload = useUploadDataset();
   const datasets = useDatasets();
-
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -28,17 +18,7 @@ export default function DashboardPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">CSV Data Analysis Tool</h1>
-        <div className="flex items-center gap-4">
-          <Link href="/settings" className="text-sm underline">
-            Settings
-          </Link>
-          <button onClick={handleSignOut} className="text-sm underline">
-            Sign out
-          </button>
-        </div>
-      </div>
+      <h1 className="text-2xl font-semibold">Upload a CSV</h1>
 
       <section className="flex flex-col gap-3">
         <label

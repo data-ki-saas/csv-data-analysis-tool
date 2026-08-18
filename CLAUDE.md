@@ -421,11 +421,53 @@ leaking existence of other users' datasets).
 - `src/lib/supabase/{client,server,middleware}.ts` — the standard `@supabase/ssr`
   three-client split (browser / server component / middleware session refresh).
   `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`) calls
-  `updateSession()`. `/` is the public marketing page and `/login`/`/signup` are
-  guest-only; every other route requires auth and redirects to `/login`. Signed-in
-  users hitting `/`, `/login`, or `/signup` get bounced to `/dashboard` instead — the
-  authenticated app home lives at `/dashboard`, not `/`, specifically so `/` can be a
-  crawlable SEO landing page (see the SEO section below).
+  `updateSession()`. `/` is the public marketing page, `/about`/`/contact`/`/docs`/
+  `/privacy`/`/terms` (`MARKETING_STATIC_PATHS`) are public marketing pages too, and
+  `/login`/`/signup` are guest-only; every other route requires auth and redirects to
+  `/login`. Signed-in users hitting `/`, `/login`, or `/signup` get bounced to
+  `/dashboard` instead — the authenticated app home lives at `/dashboard`, not `/`,
+  specifically so `/` can be a crawlable SEO landing page (see the SEO section below).
+  `MARKETING_STATIC_PATHS` gets the same treatment as `SHARE_PATH_PREFIX`: public for
+  everyone, but deliberately **not** added to the guest-only bounce branch, since a
+  signed-in visitor must still be able to read these pages (e.g. from the footer)
+  instead of being redirected away.
+- **Site navigation** — a standard marketing header/footer for the public site, and a
+  persistent left sidebar for the authenticated app, deliberately built as two
+  separate navigation systems rather than one nav reused everywhere:
+  - `src/app/(marketing)/` — a route group (doesn't affect the URL) wrapping `/`,
+    `/login`, `/signup`, and the new `/about`, `/contact`, `/docs`, `/privacy`,
+    `/terms` pages in one shared `layout.tsx` that renders `<SiteHeader />
+    {children} <SiteFooter />`. `src/components/SiteHeader.tsx` shows a dual-colour
+    `HomeIcon` (`src/components/IconButton.tsx` — the only icon in that file with a
+    second explicit colour, the roof in `var(--color-accent)`, since this is a brand
+    mark rather than a functional action icon) linking to `/`, nav links to About/
+    Contact/Documentation, and an auth-aware right side that shows **Dashboard** when
+    a Supabase session exists or **Sign in**/**Sign up free** when it doesn't — it
+    detects the session the same way `theme-sync.tsx` does
+    (`supabase.auth.getSession()` + an `onAuthStateChange` subscription), since this
+    header (unlike the old `/`-only one it replaced) now also renders on pages a
+    signed-in visitor can reach. `src/components/SiteFooter.tsx` repeats those links
+    plus Privacy Policy/Terms of Use and a copyright line.
+  - `src/content/siteContent.json` — the editable source for About/Contact/
+    Documentation body copy (`{title, sections: [{heading, body}]}`, plus `email` for
+    Contact), imported directly by their (server component) pages — editing the JSON
+    later needs no component changes as long as that shape holds. Currently
+    placeholder text, not final copy. Privacy Policy and Terms of Use are deliberately
+    **not** JSON-sourced: they're full boilerplate legal text written directly into
+    `privacy/page.tsx`/`terms/page.tsx` (generic template text, not reviewed by
+    counsel — normal practice before relying on it for real compliance). Contact is
+    static contact info, not a working form — there's no email-sending infrastructure
+    in this codebase, and building one is a separate, bigger scope.
+  - `src/components/DashboardSidebar.tsx` — the authenticated app's left nav, mounted
+    by both `dashboard/layout.tsx` and `settings/layout.tsx` (the only two top-level
+    authenticated route trees). Global links (Datasets, Settings, Sign out — the sign-
+    out logic moved here from `dashboard/page.tsx`) always show; a contextual "This
+    dataset" section (Column Types/Visual Reports/Presentation) appears only when
+    `useParams()` yields a `datasetId`, i.e. under `/dashboard/[datasetId]/*` —
+    replacing the individual "Back to dashboard"/"Back to reports" links each of
+    those pages used to hand-roll. Responsive via layout direction, not a hamburger
+    drawer: `flex-row` (a horizontal top bar) below `md:`, `flex-col` (a left column)
+    at `md:` and up — this codebase had no existing mobile-drawer pattern to extend.
 - `src/lib/api.ts` — the only place that calls the FastAPI backend. Every function
   attaches the current Supabase session's access token as `Authorization: Bearer
   <token>`, read fresh per call via `supabase.auth.getSession()` — don't cache the
@@ -629,13 +671,17 @@ pdf export", "interactive dashboard export").
   Components**. Every current page under `src/app/*/page.tsx` is a client component
   (`"use client"`, for hooks/state), so metadata can't live in `page.tsx` directly —
   instead each route gets a sibling `layout.tsx` (a plain server component that just
-  exports `metadata` and renders `{children}`). The one exception is `src/app/page.tsx`
-  (the marketing page), which has no interactivity and is a server component, so its
-  metadata is exported directly from `page.tsx`.
+  exports `metadata` and renders `{children}`). The exceptions are the marketing pages
+  with no interactivity — `src/app/(marketing)/page.tsx`, `about/page.tsx`,
+  `contact/page.tsx`, `docs/page.tsx`, `privacy/page.tsx`, `terms/page.tsx` — which are
+  server components and export `metadata` directly.
 - `/dashboard` and `/settings` require auth, so their metadata sets
   `robots: { index: false, follow: false }` and `src/app/robots.ts` disallows them —
   crawling a page that just redirects to `/login` wastes crawl budget and looks bad.
-- `src/app/sitemap.ts` lists only the public routes (`/`, `/login`, `/signup`).
+- `src/app/sitemap.ts` lists only the public routes (`/`, `/login`, `/signup`, `/about`,
+  `/contact`, `/docs`, `/privacy`, `/terms`). `src/app/robots.ts` needs no matching
+  change for these — it already `allow`s `/` broadly and only disallows the
+  auth-gated/user-content paths (`/dashboard`, `/settings`, `/share`).
 - **When adding a new frontend page, hand-write its metadata directly** (no LLM tool
   involved — there used to be a `backend/scripts/generate_seo.py` that drafted it via
   the configured LLM provider; it's been removed in favor of writing metadata straight

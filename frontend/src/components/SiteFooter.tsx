@@ -1,0 +1,26 @@
+import Link from "next/link";
+
+const FOOTER_LINKS = [
+  { href: "/about", label: "About Us" },
+  { href: "/contact", label: "Contact Us" },
+  { href: "/docs", label: "Documentation" },
+  { href: "/privacy", label: "Privacy Policy" },
+  { href: "/terms", label: "Terms of Use" },
+];
+
+export function SiteFooter() {
+  return (
+    <footer className="mt-16 border-t border-border">
+      <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-3 px-4 py-8 text-sm opacity-80 sm:flex-row sm:justify-between">
+        <nav className="flex flex-wrap items-center justify-center gap-4">
+          {FOOTER_LINKS.map((link) => (
+            <Link key={link.href} href={link.href} className="underline">
+              {link.label}
+            </Link>
+          ))}
+        </nav>
+        <p>&copy; {new Date().getFullYear()} CSV Data Analysis Tool. All rights reserved.</p>
+      </div>
+    </footer>
+  );
+}

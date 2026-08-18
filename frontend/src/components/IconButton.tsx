@@ -106,6 +106,20 @@ export function MinimizeIcon() {
   );
 }
 
+// Dual-colour, unlike every other icon here -- a site "home" mark benefits
+// from a bit of brand colour in a header that's otherwise plain currentColor
+// outlines, so the roof is filled with the accent colour while the body
+// stays an outline in the current text colour.
+export function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11.5 12 4l9 7.5" fill="none" stroke="var(--color-accent)" />
+      <path d="M5.5 10v9.5a1 1 0 0 0 1 1H17.5a1 1 0 0 0 1-1V10" fill="none" stroke="currentColor" />
+      <path d="M9.5 20.5v-6h5v6" fill="none" stroke="currentColor" />
+    </svg>
+  );
+}
+
 interface IconButtonProps {
   label: string;
   onClick?: () => void;

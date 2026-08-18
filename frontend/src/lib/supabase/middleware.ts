@@ -7,6 +7,10 @@ const GUEST_ONLY_PATHS = ["/login", "/signup"];
 // a logged-in user hitting their own (or someone else's) share link must NOT be
 // bounced to /dashboard.
 const SHARE_PATH_PREFIX = "/share/";
+// Standard marketing pages (About/Contact/Documentation/Privacy/Terms) -- same
+// "public but not guest-only" treatment as SHARE_PATH_PREFIX, since a signed-in
+// visitor must still be able to read these, e.g. from the footer.
+const MARKETING_STATIC_PATHS = ["/about", "/contact", "/docs", "/privacy", "/terms"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -35,7 +39,8 @@ export async function updateSession(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isGuestOnlyPath = GUEST_ONLY_PATHS.some((path) => pathname.startsWith(path));
   const isSharePath = pathname.startsWith(SHARE_PATH_PREFIX);
-  const isPublicPath = pathname === "/" || isGuestOnlyPath || isSharePath;
+  const isMarketingStaticPath = MARKETING_STATIC_PATHS.some((path) => pathname.startsWith(path));
+  const isPublicPath = pathname === "/" || isGuestOnlyPath || isSharePath || isMarketingStaticPath;
 
   if (!user && !isPublicPath) {
     return NextResponse.redirect(new URL("/login", request.url));
