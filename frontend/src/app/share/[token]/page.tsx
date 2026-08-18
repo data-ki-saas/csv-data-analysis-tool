@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { getPublicChartShare } from "@/lib/api";
 import type { ChartFilter } from "@/lib/chartQueries";
+import { cn } from "@/lib/utils";
+import { IconButton, MaximizeIcon, MinimizeIcon } from "@/components/IconButton";
 import { TimeSeriesChart } from "@/components/charts/TimeSeriesChart";
 import { HistogramChart } from "@/components/charts/HistogramChart";
 import { CategoricalChart } from "@/components/charts/CategoricalChart";
@@ -23,11 +25,29 @@ export default function SharedChartPage() {
   // page, so bin-select/category-toggle state stays purely local and cosmetic
   // (dimming/highlighting), unlike ChartCard's dataset-wide ChartFilter.
   const [filter, setFilter] = useState<ChartFilter | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const query = useQuery({
     queryKey: ["publicChartShare", token],
     queryFn: () => getPublicChartShare(token),
   });
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  function handleToggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      containerRef.current?.requestFullscreen();
+    }
+  }
 
   function handleCategoryToggle(value: string) {
     if (!query.data) return;
@@ -65,12 +85,26 @@ export default function SharedChartPage() {
       )}
 
       {query.data && (
-        <div className="flex flex-col gap-3 rounded border border-border bg-surface p-5">
+        <div
+          ref={containerRef}
+          className={cn(
+            "flex flex-col gap-3 rounded border border-border bg-surface p-5",
+            isFullscreen && "justify-center p-10"
+          )}
+        >
           <div className="flex items-start justify-between gap-2">
             <h1 className="font-medium">{query.data.title}</h1>
-            <span className="shrink-0 rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
-              {PARTITION_LABELS[query.data.partition_type] ?? query.data.partition_type}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="rounded bg-accent/10 px-2 py-0.5 text-xs text-accent">
+                {PARTITION_LABELS[query.data.partition_type] ?? query.data.partition_type}
+              </span>
+              <IconButton
+                label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                onClick={handleToggleFullscreen}
+              >
+                {isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}
+              </IconButton>
+            </div>
           </div>
 
           {query.data.partition_type === "datetime" && <TimeSeriesChart result={query.data.result} />}
