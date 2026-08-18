@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   addCustomChart,
   deleteChart,
@@ -9,6 +9,32 @@ import {
   type ChartRecommendation,
   type ReportStrategy,
 } from "@/lib/api";
+
+/** Reads the ["reportStrategy", datasetId] cache entry reactively.
+ *
+ * `useReportStrategy` below (and every other mutation in this file) is a
+ * `useMutation`, not a `useQuery` -- a mutation's own `.data` only updates
+ * when *that specific hook instance's* `mutate()` resolves, it is not a
+ * subscription to the query cache. `queryClient.setQueryData(["reportStrategy",
+ * ...])` from useDeleteChart/useReorderCharts/useAddCustomChart/useUpdateChart
+ * writes into the cache correctly, but nothing was ever subscribed to that
+ * cache entry, so a delete/reorder/custom-add/rename appeared to do nothing
+ * until the next full page load's auto-generate effect called
+ * `strategy.mutate(false)` again and repopulated the mutation's own `.data`
+ * from the (already-updated) cache. This hook is the fix: an always-enabled
+ * subscriber with no fetcher of its own (every write to this cache key comes
+ * from a mutation's onSuccess, never from this hook fetching) -- reading
+ * through it means every one of those writes re-renders the page immediately. */
+export function useReportStrategyData(datasetId: string) {
+  return useQuery<ReportStrategy>({
+    queryKey: ["reportStrategy", datasetId],
+    queryFn: () => {
+      throw new Error("reportStrategy has no fetcher of its own -- only populated via mutations");
+    },
+    enabled: false,
+    staleTime: Infinity,
+  });
+}
 
 export function useReportStrategy(datasetId: string) {
   const queryClient = useQueryClient();

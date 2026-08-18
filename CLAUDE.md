@@ -645,11 +645,30 @@ leaking existence of other users' datasets).
   re-clicking "Generate visual report." A dataset that's never been analyzed
   (`has_report_strategy` false) still waits for that first click, so no dataset is ever
   auto-analyzed without the user having asked at least once. The dataset summary block
-  at the top of the page shows `name` (semibold), `description` (italic, if set), and
-  `notes` (`line-clamp-3`'d, if set) above the row count — the same three
-  user-editable fields as the dashboard `DatasetCard`/Column Types page, just
-  read-only here (editing already lives on those other two surfaces). `ChartCard`
-  dispatches on `partition_type` to `TimeSeriesChart`
+  at the top of the page shows a click-to-edit `name`/`description` (local
+  `NameEditor`/`DescriptionEditor`, same commit-on-blur/Enter pattern as everywhere
+  else, wired through the shared `useUpdateDataset` hook so an edit here shows up on
+  the dashboard card and Column Types page too) plus read-only `notes`
+  (`line-clamp-3`'d, if set) and row count — `notes` stays edit-only from the Column
+  Types page, this page only added name/description editing.
+  - **Reading chart data through a `useQuery`, not a mutation's own `.data`** — every
+    write here (`useReportStrategy`, `useAddCustomChart`, `useDeleteChart`,
+    `useUpdateChart`, `useReorderCharts`) is a `useMutation` that calls
+    `queryClient.setQueryData(["reportStrategy", datasetId], ...)` in `onSuccess`. A
+    `useMutation`'s own `.data` is *not* a subscription to that cache entry — it only
+    updates when that specific hook instance's own `mutate()` resolves — so a delete/
+    reorder/custom-add/rename appeared to do nothing until the next full page load's
+    auto-generate effect called `strategy.mutate(false)` again and repopulated
+    `strategy.data` fresh from the (already-updated) cache. `useReportStrategyData()`
+    fixes this: an always-enabled `useQuery` on the same key with a `queryFn` that
+    throws if ever actually called (it never fetches on its own — every write to this
+    cache key comes from one of the mutations above) — reading `recommendations`
+    through this hook instead of `strategy.data` means every mutation's write
+    re-renders the page immediately, since `useQuery` *does* subscribe to cache
+    writes regardless of which mutation made them.
+  - Deleting a chart (`ChartCard`'s trash icon) confirms via `window.confirm()` first,
+    same pattern as dataset deletion on the dashboard.
+  - `ChartCard` dispatches on `partition_type` to `TimeSeriesChart`
   (line/area toggle), `HistogramChart` (bars + an optional Gaussian overlay for
   `bell_curve` — see below), or `CategoricalChart` (bar/pie).
   - **Fast aggregation without another LLM round-trip**: `src/lib/chartQueries.ts`
