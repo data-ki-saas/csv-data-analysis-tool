@@ -3,6 +3,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // "/" is the public marketing page; everything else needs auth unless listed here.
 const GUEST_ONLY_PATHS = ["/login", "/signup"];
+// Public for everyone, including a signed-in visitor -- unlike GUEST_ONLY_PATHS,
+// a logged-in user hitting their own (or someone else's) share link must NOT be
+// bounced to /dashboard.
+const SHARE_PATH_PREFIX = "/share/";
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -30,7 +34,8 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isGuestOnlyPath = GUEST_ONLY_PATHS.some((path) => pathname.startsWith(path));
-  const isPublicPath = pathname === "/" || isGuestOnlyPath;
+  const isSharePath = pathname.startsWith(SHARE_PATH_PREFIX);
+  const isPublicPath = pathname === "/" || isGuestOnlyPath || isSharePath;
 
   if (!user && !isPublicPath) {
     return NextResponse.redirect(new URL("/login", request.url));

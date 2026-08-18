@@ -44,6 +44,8 @@ Deploy in this order — each later step needs credentials from an earlier one.
      to `datasets`.
    - `0007_create_chart_insights_cache.sql` — `chart_insights_cache` table (permanent
      per-chart-view insights cache) + RLS policies.
+   - `0008_create_chart_shares.sql` — `chart_shares` table (opt-in, revocable public
+     chart-share links) + RLS policies.
 3. **Auth settings** (Authentication > Providers > Email): disable "Confirm email"
    unless you've configured SMTP — otherwise sign-up will silently require a
    confirmation email that never arrives.

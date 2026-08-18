@@ -7,9 +7,12 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // Everything past these requires auth (see src/proxy.ts) — an
+      // /dashboard and /settings require auth (see src/proxy.ts) — an
       // unauthenticated crawler would just be bounced to /login anyway.
-      disallow: ["/dashboard", "/settings"],
+      // /share is public and reachable, but it's arbitrary user-generated
+      // content, not canonical marketing content, so it's kept out of the
+      // index too (see share/[token]/layout.tsx's matching noindex).
+      disallow: ["/dashboard", "/settings", "/share"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };

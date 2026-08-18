@@ -198,6 +198,49 @@ export async function generateInsights(datasetId: string, input: GenerateInsight
   return handleResponse<{ insights: string[] }>(response);
 }
 
+export interface ChartShare {
+  token: string;
+  title: string;
+  chart_type: ChartType;
+  partition_type: PartitionType;
+  column: string;
+  result: QueryResponse;
+  created_at: string;
+}
+
+// Reuses GenerateInsightsInput's shape -- the backend's create-share request
+// body is literally the same {title, chart_type, partition_type, column,
+// result} the insights endpoint already takes.
+export async function createChartShare(datasetId: string, input: GenerateInsightsInput) {
+  const response = await apiFetch(`${API_BASE_URL}/api/datasets/${datasetId}/shares`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeader()) },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<ChartShare>(response);
+}
+
+export async function revokeChartShare(datasetId: string, token: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/shares/${encodeURIComponent(token)}`,
+    { method: "DELETE", headers: await authHeader() }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Request failed (HTTP ${response.status})`);
+  }
+}
+
+// Public route -- no auth required, but attaching whatever session header
+// exists anyway is harmless (the backend route never checks it) and keeps
+// this call consistent with every other one in this file.
+export async function getPublicChartShare(token: string) {
+  const response = await apiFetch(`${API_BASE_URL}/api/shares/${encodeURIComponent(token)}`, {
+    headers: await authHeader(),
+  });
+  return handleResponse<ChartShare>(response);
+}
+
 export interface ChartBlock {
   type: "chart";
   id: string;

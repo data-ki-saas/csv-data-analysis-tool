@@ -11,6 +11,7 @@ from src.core.config import settings
 from src.datasets import insights_cache_repository, repository
 from src.presentations import repository as presentations_repository
 from src.settings import repository as settings_repository
+from src.shares import repository as shares_repository
 
 TEST_USER = CurrentUser(id="test-user-id", email="test@example.com")
 
@@ -238,6 +239,38 @@ def fake_chart_insights_cache_table(monkeypatch):
     table = FakeChartInsightsCacheTable()
     monkeypatch.setattr(insights_cache_repository, "get_cached_insights", table.get)
     monkeypatch.setattr(insights_cache_repository, "save_insights_cache", lambda **kwargs: table.save(**kwargs))
+    return table
+
+
+class FakeChartSharesTable:
+    """In-memory stand-in for the Supabase `chart_shares` table."""
+
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    def create(self, **payload) -> shares_repository.ChartShareRecord:
+        row = {"id": str(uuid.uuid4()), "created_at": "2026-01-01T00:00:00Z", **payload}
+        self.rows[row["token"]] = row
+        return shares_repository.ChartShareRecord(**row)
+
+    def get_by_token(self, token: str) -> shares_repository.ChartShareRecord | None:
+        row = self.rows.get(token)
+        if row is None:
+            return None
+        return shares_repository.ChartShareRecord(**row)
+
+    def delete(self, dataset_id: str, owner_id: str, token: str) -> None:
+        row = self.rows.get(token)
+        if row is not None and row["dataset_id"] == dataset_id and row["owner_id"] == owner_id:
+            del self.rows[token]
+
+
+@pytest.fixture(autouse=True)
+def fake_chart_shares_table(monkeypatch):
+    table = FakeChartSharesTable()
+    monkeypatch.setattr(shares_repository, "create_share", lambda **kwargs: table.create(**kwargs))
+    monkeypatch.setattr(shares_repository, "get_share_by_token", table.get_by_token)
+    monkeypatch.setattr(shares_repository, "delete_share", table.delete)
     return table
 
 

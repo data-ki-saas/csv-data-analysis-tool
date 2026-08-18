@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ChartRecommendation, QueryResponse } from "@/lib/api";
+import type { ChartRecommendation, ChartShare, QueryResponse } from "@/lib/api";
 import { queryDataset } from "@/lib/api";
 import { buildEffectiveSql, ChartFilter, DEFAULT_BIN_COUNT } from "@/lib/chartQueries";
 import { downloadChartAsJpg } from "@/lib/exportChartImage";
 import { printChartAsPdf } from "@/lib/exportChartPdf";
+import { useCreateChartShare, useRevokeChartShare } from "@/hooks/useChartShare";
 import { useGenerateInsights } from "@/hooks/useGenerateInsights";
 import { usePinBlock } from "@/hooks/usePresentation";
 import { TimeSeriesChart } from "./TimeSeriesChart";
@@ -29,9 +30,12 @@ interface Props {
 export function ChartCard({ datasetId, recommendation, filter, onFilterChange }: Props) {
   const [binCount, setBinCount] = useState<number | null>(null);
   const [insights, setInsights] = useState<string[] | null>(null);
+  const [share, setShare] = useState<ChartShare | null>(null);
 
   const generateInsights = useGenerateInsights(datasetId);
   const pin = usePinBlock(datasetId);
+  const createShare = useCreateChartShare(datasetId);
+  const revokeShare = useRevokeChartShare(datasetId);
 
   const sql = useMemo(
     () => buildEffectiveSql(recommendation, filter, binCount),
@@ -115,6 +119,29 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
     printChartAsPdf(toChartBlock(currentResult));
   }
 
+  function handleShare(currentResult: QueryResponse) {
+    createShare.mutate(
+      {
+        title: recommendation.title,
+        chart_type: recommendation.chart_type,
+        partition_type: recommendation.partition_type,
+        column: recommendation.column,
+        result: currentResult,
+      },
+      { onSuccess: (data) => setShare(data) }
+    );
+  }
+
+  function handleRevokeShare() {
+    if (!share) return;
+    revokeShare.mutate(share.token, { onSuccess: () => setShare(null) });
+  }
+
+  function handleCopyShareLink() {
+    if (!share) return;
+    navigator.clipboard.writeText(`${window.location.origin}/share/${share.token}`);
+  }
+
   function handlePin(currentResult: QueryResponse) {
     pin.mutate(
       {
@@ -186,8 +213,13 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
           {pin.isError && (
             <p className="text-xs text-red-600">Couldn&apos;t pin this chart: {(pin.error as Error).message}</p>
           )}
+          {(createShare.isError || revokeShare.isError) && (
+            <p className="text-xs text-red-600">
+              Couldn&apos;t update sharing: {((createShare.error ?? revokeShare.error) as Error).message}
+            </p>
+          )}
 
-          <div className="flex items-center gap-3 border-t border-border pt-2 text-xs">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs">
             <button
               type="button"
               onClick={() => handleGenerateInsights(result)}
@@ -214,6 +246,30 @@ export function ChartCard({ datasetId, recommendation, filter, onFilterChange }:
             <button type="button" onClick={() => handleDownloadPdf(result)} className="underline">
               Download PDF
             </button>
+            {!share ? (
+              <button
+                type="button"
+                onClick={() => handleShare(result)}
+                disabled={createShare.isPending}
+                className="underline disabled:opacity-50"
+              >
+                {createShare.isPending ? "Creating link…" : "Share"}
+              </button>
+            ) : (
+              <span className="flex items-center gap-2">
+                <button type="button" onClick={handleCopyShareLink} className="underline">
+                  Copy share link
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRevokeShare}
+                  disabled={revokeShare.isPending}
+                  className="underline disabled:opacity-50"
+                >
+                  {revokeShare.isPending ? "Revoking…" : "Revoke"}
+                </button>
+              </span>
+            )}
           </div>
         </>
       )}

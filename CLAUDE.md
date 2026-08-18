@@ -294,6 +294,39 @@ There is no top-level build/test command — the two halves are run independentl
     never queried or updated piecemeal — there was no reason to build granular
     "reorder block" / "move block to page" endpoints when the frontend already has to
     hold the whole document in memory to render the builder UI anyway.
+- **Shares** (`src/shares/`, mirrors the `presentations/` package layout) — the
+  backend's first genuinely public, unauthenticated surface. `POST
+  /api/datasets/{id}/shares` (`service.create_chart_share()`) snapshots one chart's
+  title/chart_type/partition_type/column/result at the moment the owner clicks "Share"
+  and returns an unguessable token (`secrets.token_urlsafe(24)` — the first use of
+  `secrets` in this backend, chosen over `uuid4` specifically because it's the module
+  Python documents for generating unguessable secrets/tokens). `GET /api/shares/{token}`
+  is the one route in the whole backend with no `Depends(get_current_user)` at all —
+  confirmed there's no global auth middleware to bypass, so simply omitting that
+  dependency is sufficient to make a route public. It never touches the dataset's
+  Parquet, R2, or SQL execution — it only reads the one `chart_shares` row by token, so
+  revoking access is just deleting that row (`DELETE
+  /api/datasets/{id}/shares/{token}`, owner-scoped, matches `repository.delete_dataset`'s
+  ownership-check-then-404 pattern). Deliberately snapshot-based rather than a live
+  query, same reasoning as `report_strategy`/insights caching and "Pin to
+  presentation": once a chart's result is computed, it's immutable and safe to persist.
+  `router.py` doesn't use a single fixed router-level `prefix` like every other
+  package's router does, since it serves two different path shapes (owner-scoped under
+  `/api/datasets/{id}/...`, public under `/api/shares/...`). No `list_shares` endpoint
+  yet — the frontend only needs create+revoke (the chart card that generated a link
+  holds its token in local state to offer "Revoke" right there), so a "manage all my
+  share links" list is unbuilt until something would actually call it. On the frontend,
+  `frontend/src/lib/supabase/middleware.ts`'s `SHARE_PATH_PREFIX` makes `/share/*`
+  public for everyone — deliberately not added to `GUEST_ONLY_PATHS`, since unlike
+  `/login`/`/signup` a logged-in visitor must still be able to view a share link
+  instead of being bounced to `/dashboard`. `/share/[token]/page.tsx` renders a live
+  interactive chart (reusing `TimeSeriesChart`/`HistogramChart`/`CategoricalChart`
+  exactly like `ChartCard` does, minus the insights/pin/download chrome), not the
+  static SVG used for JPG/PDF export, to back up the "interactive dashboards" claim on
+  the marketing page. `robots.ts` disallows `/share` and its `layout.tsx` sets
+  `noindex` — it's public and reachable (unlike `/dashboard`/`/settings`, a crawler
+  hitting it gets real content, not a redirect), but it's arbitrary user-generated
+  content, not canonical marketing content, so it's still kept out of the index.
 - `src/settings/` — per-user UI preferences (theme mode + colour theme), stored in the
   `user_settings` table (one row per user, upserted on save). Same repository/service/
   router split and owner_id-filtered access pattern as `datasets/`. `GET /api/settings`
@@ -441,15 +474,13 @@ leaking existence of other users' datasets).
     builder's "Export as PDF" button uses, just scoped to a single chart via an isolated
     popup instead of print-only CSS across the whole current page (there's no need to
     coordinate hiding every *other* chart card when each one already renders in its own
-    window). First two of a planned JPG → PDF → shareable-URL → MP4 set of export
-    options aimed at three audiences (YouTube/content creators, businesses, and
-    PPT/presentation embedding — see the SEO section). Still open: a shareable-URL
-    button (needs a new public, unauthenticated route plus an unguessable per-chart
-    share token the owner can generate/revoke — nothing shareable exists without an
-    explicit opt-in) and an animated MP4 export (needs a rendering-approach decision —
-    client-side `canvas.captureStream()`/`MediaRecorder` produces WebM natively, not
-    MP4, without a WASM encoder or server-side rendering, and the latter is a poor fit
-    for Render's free tier per the PDF-export reasoning above).
+    window). "Share" (see `src/shares/` below) rounds out the export row. First three
+    of a planned JPG → PDF → URL → MP4 set of export options aimed at three audiences
+    (YouTube/content creators, businesses, and PPT/presentation embedding — see the SEO
+    section). Still open: an animated MP4 export, which needs a rendering-approach
+    decision — client-side `canvas.captureStream()`/`MediaRecorder` produces WebM
+    natively, not MP4, without a WASM encoder or server-side rendering, and the latter
+    is a poor fit for Render's free tier per the PDF-export reasoning above.
 - `/dashboard/[datasetId]/presentation` — the multi-page drag-and-drop report builder.
   Reorder pages, reorder blocks within a page, and move a block to a different page are
   all native HTML5 drag-and-drop (`draggable` + `dataTransfer`, see

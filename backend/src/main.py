@@ -9,6 +9,7 @@ from src.datasets.router import router as datasets_router
 from src.presentations.router import router as presentations_router
 from src.query.router import router as query_router
 from src.settings.router import router as settings_router
+from src.shares.router import router as shares_router
 
 # Render's log stream is the only visibility into a deployed failure -- there's
 # no APM/observability stack here, so a plain root logger configured once at
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(presentations_router)
     app.include_router(query_router)
     app.include_router(settings_router)
+    app.include_router(shares_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
