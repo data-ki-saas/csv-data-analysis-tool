@@ -162,9 +162,7 @@ export default function SharedChartPage() {
           {query.data.footer_snapshot && (
             <div
               className="text-center text-xs opacity-80"
-              dangerouslySetInnerHTML={{
-                __html: renderBrandedFooterHtml(query.data.footer_snapshot, "", { showSeparator: false }),
-              }}
+              dangerouslySetInnerHTML={{ __html: renderBrandedFooterHtml(query.data.footer_snapshot, "") }}
             />
           )}
         </div>
