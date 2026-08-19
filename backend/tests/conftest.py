@@ -69,6 +69,7 @@ class FakeDatasetsTable:
             "value_remaps": None,
             "value_replacements": None,
             "tag_configs": None,
+            "range_configs": None,
             "description": None,
             "notes": None,
             **payload,
@@ -153,6 +154,15 @@ class FakeDatasetsTable:
         row["tag_configs"] = tag_configs
         return repository.DatasetRecord(**row)
 
+    def update_range_configs(
+        self, dataset_id: str, owner_id: str, range_configs: dict[str, dict] | None
+    ) -> repository.DatasetRecord | None:
+        row = self.rows.get(dataset_id)
+        if row is None or row["owner_id"] != owner_id:
+            return None
+        row["range_configs"] = range_configs
+        return repository.DatasetRecord(**row)
+
     # NB: this method is named `list`, which shadows the builtin for any
     # annotation written below it in this class body (Python resolves class-body
     # annotations against the class namespace first) -- keep it as the last
@@ -189,6 +199,7 @@ def fake_datasets_table(monkeypatch):
     monkeypatch.setattr(repository, "update_dataset_value_remaps", table.update_value_remaps)
     monkeypatch.setattr(repository, "update_dataset_value_replacements", table.update_value_replacements)
     monkeypatch.setattr(repository, "update_dataset_tag_configs", table.update_tag_configs)
+    monkeypatch.setattr(repository, "update_dataset_range_configs", table.update_range_configs)
     return table
 
 

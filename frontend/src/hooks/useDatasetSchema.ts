@@ -2,10 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptColumnValueMerge,
   acceptColumnValueReplacement,
+  addRangeChart,
   addTagChart,
   getColumnValues,
   getDatasetSchema,
+  getRangePreview,
   getTagCandidates,
+  RangeConfig,
   reviewColumnTypes,
   revertColumnValueMerge,
   revertColumnValueReplacement,
@@ -13,6 +16,7 @@ import {
   TagConfig,
   updateColumn,
   UpdateColumnInput,
+  updateRangeConfig,
   updateTagConfig,
   ValueMergeRule,
 } from "@/lib/api";
@@ -143,6 +147,39 @@ export function useAddTagChart(datasetId: string, column: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (title?: string) => addTagChart(datasetId, column, title),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["datasetSchema", datasetId] });
+      queryClient.invalidateQueries({ queryKey: ["reportStrategy", datasetId] });
+    },
+  });
+}
+
+export function useRangePreview(datasetId: string, column: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["rangePreview", datasetId, column],
+    queryFn: () => getRangePreview(datasetId, column),
+    enabled,
+  });
+}
+
+/** Same reasoning as useUpdateTagConfig: saving a new separator/unit/
+ * value_type re-parses the data, so the cache is invalidated (triggering a
+ * refetch) rather than patched in place. */
+export function useUpdateRangeConfig(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: RangeConfig) => updateRangeConfig(datasetId, column, config),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["rangePreview", datasetId, column] });
+    },
+  });
+}
+
+/** Same reasoning as useAddTagChart. */
+export function useAddRangeChart(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (title?: string) => addRangeChart(datasetId, column, title),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["datasetSchema", datasetId] });
       queryClient.invalidateQueries({ queryKey: ["reportStrategy", datasetId] });

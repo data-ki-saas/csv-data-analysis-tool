@@ -15,6 +15,7 @@ from src.datasets.profiling import (
     compute_column_health,
     compute_dataset_health,
     detect_multi_value_separator,
+    detect_range_pattern,
     generate_alias,
 )
 
@@ -51,6 +52,12 @@ class ColumnSchema:
     # -- surfaced so the Column Types page can flag it and the Edit column
     # dialog can offer tag extraction/vocabulary curation.
     multi_value_separator: str | None = None
+    # Set when this column's cells look like a numeric range (e.g. "4-10
+    # yrs") -- see profiling.detect_range_pattern -- surfaced so the Column
+    # Types page can flag it and the Edit column dialog can offer parsing it
+    # into a chartable numeric measure (midpoint/min/max).
+    range_separator: str | None = None
+    range_unit: str | None = None
 
 
 @dataclass
@@ -287,6 +294,62 @@ def build_tag_chart_sql(column: str, config: dict) -> str:
     )
 
 
+def _range_value_expr(ident: str, separator: str, unit: str | None, value_type: str) -> str:
+    """The parsed numeric expression for one range-formatted cell (e.g.
+    "4-10 yrs" -> 4, 10, or 7 depending on `value_type`). Both halves use
+    TRY_CAST, not CAST -- a row that doesn't actually match the configured
+    separator/unit becomes NULL (excluded from the chart) rather than
+    erroring the whole query, since real data always has some exceptions to
+    the dominant format."""
+    text_expr = f"CAST({ident} AS VARCHAR)"
+    sep_lit = _sql_string_literal(separator)
+
+    def part(n: int) -> str:
+        piece = f"split_part({text_expr}, {sep_lit}, {n})"
+        if unit:
+            piece = f"REPLACE({piece}, {_sql_string_literal(unit)}, '')"
+        return f"TRY_CAST(TRIM({piece}) AS DOUBLE)"
+
+    min_expr, max_expr = part(1), part(2)
+    if value_type == "min":
+        return min_expr
+    if value_type == "max":
+        return max_expr
+    return f"(({min_expr}) + ({max_expr})) / 2"
+
+
+_RANGE_CHART_BUCKETS = 10
+
+
+def build_range_chart_sql(column: str, config: dict) -> str:
+    """Deterministic (no LLM involved) histogram SQL for a range-formatted
+    column (e.g. "4-10 yrs" parsed into its midpoint, by default) -- the
+    same LEAST(floor(...)) binning idiom strategy_engine.py's system prompt
+    teaches the LLM for any other numeric distribution (see its SYSTEM_PROMPT
+    and worked "bell_curve" example), computed here directly since the
+    parsing is already fully specified by RangeConfig -- no LLM needed.
+    `config`: {"separator", "unit", "value_type"} (see schemas.RangeConfig).
+    Result columns (bucket, count, min_val, max_val) match exactly what
+    HistogramChart.tsx expects for a "numerical_bins"/"histogram" chart."""
+    ident = _quote_ident(column)
+    value_expr = _range_value_expr(
+        ident, config.get("separator") or "-", config.get("unit"), config.get("value_type") or "midpoint"
+    )
+    return (
+        f"WITH stats AS ("
+        f"SELECT min({value_expr}) AS min_val, max({value_expr}) AS max_val "
+        f"FROM data WHERE {ident} IS NOT NULL"
+        f"), binned AS ("
+        f"SELECT LEAST(CAST(floor(({value_expr} - stats.min_val) / NULLIF(stats.max_val - stats.min_val, 0) "
+        f"* {_RANGE_CHART_BUCKETS}) AS INTEGER), {_RANGE_CHART_BUCKETS - 1}) AS bucket, "
+        f"stats.min_val AS min_val, stats.max_val AS max_val "
+        f"FROM data, stats WHERE {ident} IS NOT NULL AND {value_expr} IS NOT NULL"
+        f") "
+        f"SELECT bucket, count(*) AS count, min_val, max_val "
+        f"FROM binned GROUP BY bucket, min_val, max_val ORDER BY bucket"
+    )
+
+
 def _new_r2_connection() -> duckdb.DuckDBPyConnection:
     """A fresh connection configured to read/write R2 (S3-compatible) objects.
 
@@ -519,9 +582,21 @@ def _profile_columns(
         null_percentage = round((null_count / row_count) * 100, 1) if row_count else 0.0
 
         multi_value_separator = None
-        if category.value == "categorical" and base_type in _TEXT_TYPES:
+        range_separator = None
+        range_unit = None
+        if base_type in _TEXT_TYPES:
             sample = _sample_non_null_values(conn, table, name, _MULTI_VALUE_SAMPLE_SIZE)
-            multi_value_separator = detect_multi_value_separator(sample)
+            if category.value == "categorical":
+                multi_value_separator = detect_multi_value_separator(sample)
+            # Checked regardless of category (unlike multi-value, which is
+            # categorical-only): a range column's cardinality can land it as
+            # either categorical (a handful of repeated buckets) or free_text
+            # (many distinct exact ranges), but the range shape itself is a
+            # property of the string format, not of how many distinct values
+            # happen to appear.
+            range_pattern = detect_range_pattern(sample)
+            if range_pattern is not None:
+                range_separator, range_unit = range_pattern
 
         profiles.append(
             ColumnSchema(
@@ -539,6 +614,8 @@ def _profile_columns(
                 health_score=compute_column_health(row_count, null_count),
                 conversion_warning=conversion_warnings.get(name),
                 multi_value_separator=multi_value_separator,
+                range_separator=range_separator,
+                range_unit=range_unit,
             )
         )
     return profiles
@@ -937,6 +1014,70 @@ class DuckDBManager:
                 f") WHERE trim(tag) != ''"
             ).fetchone()
             return row[0]
+        finally:
+            conn.close()
+
+    async def range_preview(
+        self,
+        parquet_key: str,
+        column: str,
+        separator: str,
+        unit: str | None,
+        value_type: str,
+        sample_size: int,
+        value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
+    ) -> tuple[list[tuple[str, float | None]], int, int]:
+        """A sample of (raw value, parsed value) pairs plus the *full*
+        parsed-vs-total count (not just over the sample) -- backs the
+        "Range" panel's live preview so a user can see the parsing actually
+        working (and how many rows don't match) before saving the config or
+        generating a chart from it."""
+        return await run_in_threadpool(
+            self._range_preview_sync,
+            parquet_key,
+            column,
+            separator,
+            unit,
+            value_type,
+            sample_size,
+            value_remaps,
+            value_replacements,
+        )
+
+    def _range_preview_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        separator: str,
+        unit: str | None,
+        value_type: str,
+        sample_size: int,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
+    ) -> tuple[list[tuple[str, float | None]], int, int]:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            value_expr = _range_value_expr(ident, separator, unit, value_type)
+            sample_rows = conn.execute(
+                f"SELECT CAST({ident} AS VARCHAR), {value_expr} FROM data "
+                f"WHERE {ident} IS NOT NULL LIMIT {int(sample_size)}"
+            ).fetchall()
+            total, parsed = conn.execute(
+                f"SELECT count(*) FILTER (WHERE {ident} IS NOT NULL), "
+                f"count(*) FILTER (WHERE {ident} IS NOT NULL AND {value_expr} IS NOT NULL) FROM data"
+            ).fetchone()
+            return [(row[0], row[1]) for row in sample_rows], parsed, total
         finally:
             conn.close()
 

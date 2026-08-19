@@ -8,6 +8,7 @@ from src.datasets.profiling import (
     compute_column_health,
     compute_dataset_health,
     detect_multi_value_separator,
+    detect_range_pattern,
     generate_alias,
 )
 
@@ -194,3 +195,27 @@ def test_detect_multi_value_separator_returns_none_below_threshold():
 
 def test_detect_multi_value_separator_with_no_values_returns_none():
     assert detect_multi_value_separator([]) is None
+
+
+def test_detect_range_pattern_finds_unit_suffixed_ranges():
+    values = ["4-10 yrs", "2-5 yrs", "10-15 yrs", "0-2 yrs"]
+    assert detect_range_pattern(values) == ("-", "yrs")
+
+
+def test_detect_range_pattern_handles_decimals_and_no_unit():
+    values = ["2.5-4.0", "1-3", "0.5-1.5"]
+    assert detect_range_pattern(values) == ("-", None)
+
+
+def test_detect_range_pattern_returns_none_for_atomic_numbers():
+    values = ["5", "10", "15", "20"]
+    assert detect_range_pattern(values) is None
+
+
+def test_detect_range_pattern_returns_none_below_threshold():
+    values = ["4-10 yrs", "Senior", "Manager", "Contractor"]
+    assert detect_range_pattern(values) is None
+
+
+def test_detect_range_pattern_with_no_values_returns_none():
+    assert detect_range_pattern([]) is None

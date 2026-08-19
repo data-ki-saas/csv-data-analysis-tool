@@ -2,23 +2,25 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { ColumnInfo, ReplacementRule, TagConfig, ValueMergeRule } from "@/lib/api";
+import { ColumnInfo, RangeConfig, ReplacementRule, TagConfig, ValueMergeRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   useAcceptValueMerge,
   useAcceptValueReplacement,
+  useAddRangeChart,
   useAddTagChart,
   useColumnValues,
+  useRangePreview,
   useRevertValueMerge,
   useRevertValueReplacement,
   useSuggestValueMerge,
   useTagCandidates,
   useUpdateColumn,
+  useUpdateRangeConfig,
   useUpdateTagConfig,
 } from "@/hooks/useDatasetSchema";
 import { CloseIcon, HelpTooltip, IconButton } from "@/components/IconButton";
-
-const PAGE_SIZE = 200;
+import { EDIT_COLUMN_VALUES_PAGE_SIZE } from "@/lib/limits";
 
 /** Hand-rolled modal (no existing Modal/Dialog primitive in this codebase --
  * see CLAUDE.md) -- a portal to <body> for correct stacking, a backdrop that
@@ -123,6 +125,18 @@ const DEFAULT_TAG_CONFIG: TagConfig = {
   include_other: false,
 };
 
+const DEFAULT_RANGE_CONFIG: RangeConfig = {
+  separator: "-",
+  unit: null,
+  value_type: "midpoint",
+};
+
+const RANGE_VALUE_TYPE_OPTIONS: { value: RangeConfig["value_type"]; label: string }[] = [
+  { value: "midpoint", label: "Midpoint" },
+  { value: "min", label: "Minimum" },
+  { value: "max", label: "Maximum" },
+];
+
 function TagCandidateRow({
   tag,
   count,
@@ -156,7 +170,7 @@ export function EditColumnDialog({
 }) {
   const isCategorical = column.category === "categorical";
   const canEditValues = isCategorical || column.category === "free_text";
-  const [valuesLimit, setValuesLimit] = useState(PAGE_SIZE);
+  const [valuesLimit, setValuesLimit] = useState(EDIT_COLUMN_VALUES_PAGE_SIZE);
   const values = useColumnValues(datasetId, column.name, canEditValues, valuesLimit);
   const updateColumn = useUpdateColumn(datasetId);
   const suggest = useSuggestValueMerge(datasetId, column.name);
@@ -168,9 +182,9 @@ export function EditColumnDialog({
   const [aliasValue, setAliasValue] = useState(column.alias);
   const [command, setCommand] = useState("");
   const [lastRowsUpdated, setLastRowsUpdated] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"edit" | "rules" | "tags">("edit");
+  const [activeTab, setActiveTab] = useState<"edit" | "rules" | "tags" | "range">("edit");
 
-  const [tagsLimit, setTagsLimit] = useState(PAGE_SIZE);
+  const [tagsLimit, setTagsLimit] = useState(EDIT_COLUMN_VALUES_PAGE_SIZE);
   const tagCandidates = useTagCandidates(
     datasetId,
     column.name,
@@ -207,6 +221,28 @@ export function EditColumnDialog({
   function handleAddTagChart() {
     setTagChartAdded(false);
     addTagChart.mutate(tagChartTitle.trim() || undefined, { onSuccess: () => setTagChartAdded(true) });
+  }
+
+  const rangePreview = useRangePreview(datasetId, column.name, activeTab === "range" && canEditValues);
+  const updateRangeConfig = useUpdateRangeConfig(datasetId, column.name);
+  const addRangeChart = useAddRangeChart(datasetId, column.name);
+  const [localRangeConfig, setLocalRangeConfig] = useState<RangeConfig | null>(null);
+  const [rangeChartTitle, setRangeChartTitle] = useState("");
+  const [rangeChartAdded, setRangeChartAdded] = useState(false);
+
+  const rangeConfig = localRangeConfig ?? rangePreview.data?.config ?? DEFAULT_RANGE_CONFIG;
+
+  function updateLocalRangeConfig(patch: Partial<RangeConfig>) {
+    setLocalRangeConfig({ ...rangeConfig, ...patch });
+  }
+
+  function handleSaveRangeConfig() {
+    updateRangeConfig.mutate(rangeConfig);
+  }
+
+  function handleAddRangeChart() {
+    setRangeChartAdded(false);
+    addRangeChart.mutate(rangeChartTitle.trim() || undefined, { onSuccess: () => setRangeChartAdded(true) });
   }
 
   function handleRename() {
@@ -304,24 +340,33 @@ export function EditColumnDialog({
       {canEditValues && (
         <>
           <div className="flex items-center justify-between gap-4 border-b border-border">
-            <div className="flex gap-1">
-              {(isCategorical ? (["edit", "rules", "tags"] as const) : (["edit", "rules"] as const)).map(
-                (tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setActiveTab(tab)}
-                    className={cn(
-                      "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
-                      activeTab === tab
-                        ? "border-accent font-medium"
-                        : "border-transparent opacity-60 hover:opacity-100"
-                    )}
-                  >
-                    {tab === "edit" ? "Edit values" : tab === "rules" ? `Active rules (${ruleCount})` : "Tags"}
-                  </button>
-                )
-              )}
+            <div className="flex flex-wrap gap-1">
+              {[
+                "edit",
+                "rules",
+                ...(isCategorical ? (["tags"] as const) : []),
+                "range",
+              ].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab as typeof activeTab)}
+                  className={cn(
+                    "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
+                    activeTab === tab
+                      ? "border-accent font-medium"
+                      : "border-transparent opacity-60 hover:opacity-100"
+                  )}
+                >
+                  {tab === "edit"
+                    ? "Edit values"
+                    : tab === "rules"
+                      ? `Active rules (${ruleCount})`
+                      : tab === "tags"
+                        ? "Tags"
+                        : "Range"}
+                </button>
+              ))}
             </div>
             {isCategorical && values.data && (
               <span className="shrink-0 pb-1.5 text-xs opacity-60">
@@ -442,7 +487,7 @@ export function EditColumnDialog({
                 {tagCandidates.data && tagCandidates.data.candidates.length < tagCandidates.data.total_tags && (
                   <button
                     type="button"
-                    onClick={() => setTagsLimit((l) => l + PAGE_SIZE)}
+                    onClick={() => setTagsLimit((l) => l + EDIT_COLUMN_VALUES_PAGE_SIZE)}
                     disabled={tagCandidates.isFetching}
                     className="self-start text-xs underline opacity-70 hover:opacity-100 disabled:opacity-30"
                   >
@@ -505,6 +550,137 @@ export function EditColumnDialog({
             </>
           )}
 
+          {activeTab === "range" && (
+            <>
+              <section className="flex flex-col gap-1.5">
+                <h3 className="flex items-center gap-1 text-sm font-medium">
+                  Parse cells into a number
+                  <HelpTooltip label="Range parsing help">
+                    Splits a cell like &quot;4-10 yrs&quot; into two numbers and picks one representative
+                    value per row -- the midpoint (the average of the two), or just the minimum or maximum.
+                    That value is then chartable as a normal numeric distribution.
+                  </HelpTooltip>
+                </h3>
+                <p className="text-xs opacity-60">
+                  {column.range_separator
+                    ? `This column's cells look like a numeric range, e.g. "min${column.range_separator}max${
+                        column.range_unit ? ` ${column.range_unit}` : ""
+                      }".`
+                    : "Configure how this column's cells should be parsed as a numeric range."}
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <label className="flex flex-col gap-1 text-xs">
+                    Separator
+                    <input
+                      value={rangeConfig.separator}
+                      onChange={(e) => updateLocalRangeConfig({ separator: e.target.value || "-" })}
+                      className="w-16 rounded border border-border bg-surface px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
+                    Unit (optional)
+                    <input
+                      value={rangeConfig.unit ?? ""}
+                      onChange={(e) => updateLocalRangeConfig({ unit: e.target.value || null })}
+                      placeholder='e.g. "yrs"'
+                      className="w-32 rounded border border-border bg-surface px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
+                    Value
+                    <select
+                      value={rangeConfig.value_type}
+                      onChange={(e) =>
+                        updateLocalRangeConfig({ value_type: e.target.value as RangeConfig["value_type"] })
+                      }
+                      className="rounded border border-border bg-surface px-2 py-1 text-sm"
+                    >
+                      {RANGE_VALUE_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              <section className="flex flex-col gap-1.5">
+                <h3 className="text-sm font-medium">Preview</h3>
+                {rangePreview.data && (
+                  <p className="text-xs opacity-60">
+                    {rangePreview.data.parsed_count.toLocaleString()} of{" "}
+                    {rangePreview.data.total_count.toLocaleString()} rows parsed
+                  </p>
+                )}
+                {rangePreview.isLoading && <p className="text-xs opacity-60">Loading…</p>}
+                {rangePreview.isError && (
+                  <p className="text-xs text-red-600">{(rangePreview.error as Error).message}</p>
+                )}
+                <div className="max-h-40 overflow-y-auto rounded border border-border">
+                  <table className="min-w-full text-left text-xs">
+                    <tbody>
+                      {rangePreview.data?.sample.map((row, i) => (
+                        <tr key={i} className="border-b border-border last:border-b-0">
+                          <td className="px-2 py-1">{row.raw_value}</td>
+                          <td className="px-2 py-1 text-right opacity-60">
+                            {row.parsed_value === null ? (
+                              <span className="italic">unparsed</span>
+                            ) : (
+                              row.parsed_value.toLocaleString()
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleSaveRangeConfig}
+                    disabled={updateRangeConfig.isPending}
+                    className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground disabled:opacity-50"
+                  >
+                    {updateRangeConfig.isPending ? "Saving…" : "Save configuration"}
+                  </button>
+                </div>
+                {updateRangeConfig.isError && (
+                  <p className="text-xs text-red-600">{(updateRangeConfig.error as Error).message}</p>
+                )}
+              </section>
+
+              <section className="flex flex-col gap-1.5 border-t border-border pt-4">
+                <h3 className="text-sm font-medium">Add to Visual Reports</h3>
+                <p className="text-xs opacity-60">
+                  Adds a distribution chart using the saved configuration above.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={rangeChartTitle}
+                    onChange={(e) => setRangeChartTitle(e.target.value)}
+                    placeholder={`${column.alias} distribution`}
+                    className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddRangeChart}
+                    disabled={addRangeChart.isPending}
+                    className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-accent-foreground disabled:opacity-50"
+                  >
+                    {addRangeChart.isPending ? "Adding…" : "Add chart"}
+                  </button>
+                </div>
+                {rangeChartAdded && (
+                  <p className="text-xs opacity-70">Chart added -- view it on the Visual Reports page.</p>
+                )}
+                {addRangeChart.isError && (
+                  <p className="text-xs text-red-600">{(addRangeChart.error as Error).message}</p>
+                )}
+              </section>
+            </>
+          )}
+
           {activeTab === "edit" && (
             <>
               {lastRowsUpdated !== null && (
@@ -542,7 +718,7 @@ export function EditColumnDialog({
                 {values.data && values.data.values.length < values.data.distinct_count && (
                   <button
                     type="button"
-                    onClick={() => setValuesLimit((l) => l + PAGE_SIZE)}
+                    onClick={() => setValuesLimit((l) => l + EDIT_COLUMN_VALUES_PAGE_SIZE)}
                     disabled={values.isFetching}
                     className="self-start text-xs underline opacity-70 hover:opacity-100 disabled:opacity-30"
                   >

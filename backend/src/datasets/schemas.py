@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.core.config import settings
 from src.query.schemas import QueryResponse
 
 CategoryLiteral = Literal["datetime", "continuous_numerical", "categorical", "free_text"]
@@ -25,6 +26,10 @@ class ColumnInfo(BaseModel):
     # delimited tags into one string (e.g. "Mumbai, Pune") -- see
     # profiling.detect_multi_value_separator.
     multi_value_separator: str | None = None
+    # Set when this column's cells look like a numeric range (e.g. "4-10
+    # yrs") -- see profiling.detect_range_pattern.
+    range_separator: str | None = None
+    range_unit: str | None = None
 
 
 class DatasetPreview(BaseModel):
@@ -92,7 +97,7 @@ class UpdateDatasetRequest(BaseModel):
     field's own valid range already includes falsy values."""
 
     name: str | None = None
-    description: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=settings.dataset_description_max_length)
     # Unlike `description`, not meant to fit neatly in a card -- a longer,
     # uncapped free-form field for a detailed writeup of the data.
     notes: str | None = None
@@ -173,8 +178,12 @@ class ReportStrategyRequest(BaseModel):
 class CustomChartRequest(BaseModel):
     # e.g. "show me distribution of annual income city wise" -- see
     # strategy_engine.suggest_custom_chart(). Capped well above any
-    # reasonable request; this isn't a free-text notes field.
-    prompt: str = Field(min_length=1, max_length=300)
+    # reasonable request; this isn't a free-text notes field. 500 (not 300)
+    # specifically leaves room for a fully-spelled-out parsing instruction
+    # (e.g. "parse experience_raw as 'min - max yrs', strip 'yrs', split on
+    # '-', average the two numbers...") -- the more explicit the prompt, the
+    # more reliably the LLM writes correct SQL for it.
+    prompt: str = Field(min_length=1, max_length=settings.custom_chart_prompt_max_length)
 
 
 class UpdateChartRequest(BaseModel):
@@ -277,7 +286,7 @@ class SuggestValueMergeRequest(BaseModel):
     # or a literal "replace 'Delhi / NCR' with 'Delhi'" -- a single-turn
     # instruction against the column's current state, not a multi-turn chat
     # (see src/datasets/value_merge.py).
-    command: str = Field(min_length=1, max_length=300)
+    command: str = Field(min_length=1, max_length=settings.value_edit_command_max_length)
 
 
 class ValueMergeSuggestion(BaseModel):
@@ -299,8 +308,8 @@ class AcceptValueMergeRequest(BaseModel):
 
 
 class AcceptReplacementRequest(BaseModel):
-    find: str = Field(min_length=1, max_length=300)
-    replace: str = Field(max_length=300)
+    find: str = Field(min_length=1, max_length=settings.replacement_text_max_length)
+    replace: str = Field(max_length=settings.replacement_text_max_length)
     is_regex: bool = False
 
 
@@ -325,9 +334,9 @@ class TagConfig(BaseModel):
     # generously (not tightly like tag_separator) since this is realistically
     # typed as a short marker string (e.g. "-", " - ", "Mode:"), not always a
     # single character.
-    prefix_separator: str | None = Field(default=None, max_length=40)
-    tag_separator: str = Field(default=",", min_length=1, max_length=5)
-    vocabulary: list[str] = Field(default=[], max_length=200)
+    prefix_separator: str | None = Field(default=None, max_length=settings.tag_prefix_separator_max_length)
+    tag_separator: str = Field(default=",", min_length=1, max_length=settings.tag_separator_max_length)
+    vocabulary: list[str] = Field(default=[], max_length=settings.tag_vocabulary_max_size)
     # When vocabulary is set: fold every non-vocabulary tag into one "Other"
     # bucket instead of excluding it, so the chart's total still covers
     # every row. Ignored when vocabulary is empty (nothing to be "other" than).
@@ -357,4 +366,44 @@ class UpdateTagConfigRequest(TagConfig):
 class AddTagChartRequest(BaseModel):
     # Optional override for the generated chart's title -- default is
     # "{alias} by tag" (see service.add_tag_chart).
-    title: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=settings.chart_title_max_length)
+
+
+class RangeConfig(BaseModel):
+    """How to parse one range-formatted column's cell (e.g. "4-10 yrs") into
+    a single chartable number -- see duckdb_manager.build_range_chart_sql.
+    `value_type` is what gives the user control over which number a row
+    contributes: the midpoint (the default -- a reasonable single estimate
+    for a range), or the range's own min/max."""
+
+    separator: str = Field(default="-", min_length=1, max_length=settings.range_separator_max_length)
+    unit: str | None = Field(default=None, max_length=settings.range_unit_max_length)
+    value_type: Literal["midpoint", "min", "max"] = "midpoint"
+
+
+class RangeSampleRow(BaseModel):
+    raw_value: str
+    parsed_value: float | None
+
+
+class RangePreviewResponse(BaseModel):
+    dataset_id: str
+    column: str
+    config: RangeConfig
+    sample: list[RangeSampleRow]
+    # Full-dataset parsed-vs-total counts (not just over `sample`) -- lets
+    # the "Range" panel show e.g. "142 of 150 rows parsed" so a user can
+    # judge whether the configured separator/unit actually fit their data
+    # before generating a chart from it.
+    parsed_count: int
+    total_count: int
+
+
+class UpdateRangeConfigRequest(RangeConfig):
+    pass
+
+
+class AddRangeChartRequest(BaseModel):
+    # Optional override for the generated chart's title -- default is
+    # "{alias} distribution" (see service.add_range_chart).
+    title: str | None = Field(default=None, max_length=settings.chart_title_max_length)

@@ -13,6 +13,7 @@ import {
   useReportStrategyData,
 } from "@/hooks/useReportStrategy";
 import type { ChartFilter } from "@/lib/chartQueries";
+import { CUSTOM_CHART_PROMPT_MAX_LENGTH } from "@/lib/limits";
 
 function NameEditor({
   name,
@@ -229,6 +230,7 @@ export default function ReportsPage() {
           value={customPrompt}
           onChange={(e) => setCustomPrompt(e.target.value)}
           placeholder="Describe a chart, e.g. &quot;distribution of annual income city wise&quot;"
+          maxLength={CUSTOM_CHART_PROMPT_MAX_LENGTH}
           disabled={addCustomChart.isPending}
           className="min-w-0 flex-1 rounded border border-border bg-surface px-3 py-2 text-sm"
         />

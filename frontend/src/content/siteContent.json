@@ -58,6 +58,10 @@
         "body": "Some columns pack more than one value into a single cell -- a \"location\" field listing \"Mumbai, Pune\" for someone who works across both cities. We automatically detect columns like this and let you split them into individual tags, choose exactly which tags matter (trimming out noise or rare one-offs), and generate a ready-to-use breakdown chart -- so a mention that's buried inside a combined value still gets counted properly instead of hiding in a wall of unique text."
       },
       {
+        "heading": "Turning Ranges into Numbers",
+        "body": "Some columns hold a range instead of a single value -- an experience field listing \"4-10 yrs\" rather than one number. We automatically detect columns shaped like this and let you turn each row's range into a single usable number (its midpoint, minimum, or maximum), with a live preview so you can see exactly how it'll parse before generating a distribution chart from it."
+      },
+      {
         "heading": "Running SQL Queries",
         "body": "Once a dataset is uploaded, query it directly with SQL. Queries run against the underlying data engine and return results in real time, with no need to export to another tool."
       },

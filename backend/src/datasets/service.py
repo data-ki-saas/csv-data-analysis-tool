@@ -16,6 +16,7 @@ from src.datasets.duckdb_manager import (
     MalformedCsvError,
     QueryResult,
     UnsafeQueryError,
+    build_range_chart_sql,
     build_tag_chart_sql,
     duckdb_manager,
 )
@@ -32,6 +33,9 @@ from src.datasets.schemas import (
     DatasetSchemaResponse,
     GenerateInsightsRequest,
     InsightsResponse,
+    RangeConfig,
+    RangePreviewResponse,
+    RangeSampleRow,
     ReplacementRule,
     ReportStrategyResponse,
     TagCandidate,
@@ -121,6 +125,7 @@ async def _create_deduplicated_dataset(
             value_remaps=matched.value_remaps,
             value_replacements=matched.value_replacements,
             tag_configs=matched.tag_configs,
+            range_configs=matched.range_configs,
         )
     except Exception as exc:
         logger.exception(
@@ -506,8 +511,8 @@ async def update_column(
     return _to_schema_response(updated_record, preview)
 
 
-_COLUMN_VALUES_LIMIT = 200
-_COLUMN_VALUES_MAX_LIMIT = 5000
+_COLUMN_VALUES_LIMIT = settings.column_values_page_size
+_COLUMN_VALUES_MAX_LIMIT = settings.column_values_max_page_size
 
 
 def _find_column(record: repository.DatasetRecord, column_name: str) -> ColumnInfo:
@@ -846,8 +851,8 @@ async def revert_value_replacement(
     return await _column_values_response(updated_record, column_name)
 
 
-_TAG_CANDIDATES_LIMIT = 200
-_TAG_CANDIDATES_MAX_LIMIT = 5000
+_TAG_CANDIDATES_LIMIT = settings.tag_candidates_page_size
+_TAG_CANDIDATES_MAX_LIMIT = settings.tag_candidates_max_page_size
 
 
 def _get_tag_config(record: repository.DatasetRecord, column: ColumnInfo) -> TagConfig:
@@ -990,6 +995,144 @@ async def add_tag_chart(
         chart_type="bar",
         title=(title or f"{column.alias} by tag").strip(),
         rationale=f"Tag breakdown of {column.alias} -- one packed cell can count toward more than one tag.",
+        sql=sql,
+        result=result,
+        error=error,
+    )
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    repository.update_dataset_report_strategy(
+        dataset_id, user.id, existing + [new_chart.model_dump(mode="json")]
+    )
+
+    return new_chart
+
+
+_RANGE_PREVIEW_SAMPLE_SIZE = settings.range_preview_sample_size
+
+
+def _get_range_config(record: repository.DatasetRecord, column: ColumnInfo) -> RangeConfig:
+    """The persisted config for this column, or a sensible default: the
+    separator/unit profiling already auto-detected (see
+    profiling.detect_range_pattern) if any, else a plain "-" with no unit."""
+    saved = (record.range_configs or {}).get(column.name)
+    if saved is not None:
+        return RangeConfig(**saved)
+    return RangeConfig(separator=column.range_separator or "-", unit=column.range_unit)
+
+
+async def get_range_preview(dataset_id: str, column_name: str, user: CurrentUser) -> RangePreviewResponse:
+    """A sample of (raw, parsed) value pairs plus the full parsed-vs-total
+    count under this column's current (persisted or default) range config --
+    what the "Range" panel shows so a user can judge whether the separator/
+    unit/value_type actually fit their data before generating a chart."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    column = _find_column(record, column_name)
+    _assert_text_like(column)
+    config = _get_range_config(record, column)
+
+    sample, parsed_count, total_count = await duckdb_manager.range_preview(
+        record.parquet_key,
+        column_name,
+        config.separator,
+        config.unit,
+        config.value_type,
+        _RANGE_PREVIEW_SAMPLE_SIZE,
+        record.value_remaps,
+        record.value_replacements,
+    )
+    return RangePreviewResponse(
+        dataset_id=record.id,
+        column=column_name,
+        config=config,
+        sample=[RangeSampleRow(raw_value=raw, parsed_value=parsed) for raw, parsed in sample],
+        parsed_count=parsed_count,
+        total_count=total_count,
+    )
+
+
+async def update_range_config(
+    dataset_id: str, column_name: str, config: RangeConfig, user: CurrentUser
+) -> RangePreviewResponse:
+    """Persists a column's range-parsing config and returns a fresh preview
+    under it -- changing the separator/unit/value_type immediately re-parses
+    the data, so the panel reflects the new config right away."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    _assert_text_like(_find_column(record, column_name))
+
+    updated_configs = {**(record.range_configs or {}), column_name: config.model_dump()}
+    updated_record = repository.update_dataset_range_configs(dataset_id, user.id, updated_configs)
+    if updated_record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    sample, parsed_count, total_count = await duckdb_manager.range_preview(
+        updated_record.parquet_key,
+        column_name,
+        config.separator,
+        config.unit,
+        config.value_type,
+        _RANGE_PREVIEW_SAMPLE_SIZE,
+        updated_record.value_remaps,
+        updated_record.value_replacements,
+    )
+    return RangePreviewResponse(
+        dataset_id=updated_record.id,
+        column=column_name,
+        config=config,
+        sample=[RangeSampleRow(raw_value=raw, parsed_value=parsed) for raw, parsed in sample],
+        parsed_count=parsed_count,
+        total_count=total_count,
+    )
+
+
+async def add_range_chart(
+    dataset_id: str, column_name: str, title: str | None, user: CurrentUser
+) -> ChartRecommendation:
+    """Adds a distribution chart for a range-formatted column (e.g. "4-10
+    yrs" parsed into its midpoint by default) to the dataset's report --
+    deterministic (see duckdb_manager.build_range_chart_sql), no LLM call
+    needed, since the parsing is already fully specified by the column's
+    saved (or default) RangeConfig. Same append-to-report_strategy pattern
+    as add_custom_chart/add_tag_chart."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    column = _find_column(record, column_name)
+    _assert_text_like(column)
+    config = _get_range_config(record, column)
+
+    sql = build_range_chart_sql(column_name, config.model_dump())
+
+    result = None
+    error = None
+    try:
+        query_result = await duckdb_manager.execute_query(
+            record.parquet_key, sql, value_remaps=record.value_remaps, value_replacements=record.value_replacements
+        )
+        result = QueryResponse(
+            columns=query_result.columns,
+            rows=query_result.rows,
+            row_count=query_result.row_count,
+            truncated=query_result.truncated,
+        )
+    except (UnsafeQueryError, duckdb.Error) as exc:
+        error = str(exc)
+
+    new_chart = ChartRecommendation(
+        id=uuid.uuid4().hex,
+        source="custom",
+        column=column_name,
+        partition_type="numerical_bins",
+        chart_type="histogram",
+        title=(title or f"{column.alias} distribution").strip(),
+        rationale=f"Distribution of {column.alias}, parsed from each row's range into its {config.value_type}.",
         sql=sql,
         result=result,
         error=error,

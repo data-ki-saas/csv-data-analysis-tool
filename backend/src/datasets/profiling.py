@@ -49,6 +49,44 @@ MULTI_VALUE_SEPARATOR_CANDIDATES = [",", ";", "|", "/"]
 # tokens under a candidate separator for the column to be flagged.
 MULTI_VALUE_MATCH_THRESHOLD = 0.5
 
+# A "range" column's cells hold a min-max numeric range, optionally with a
+# trailing unit (e.g. "4-10 yrs", "18-25", "2.5-4.0 km") -- text DuckDB's own
+# type inference will never treat as numeric, so it never becomes a
+# chartable measure on its own. Only non-negative numbers are matched
+# (real-world ranges in this shape essentially always are), which also
+# sidesteps "-" being ambiguous between range separator and a negative sign.
+_RANGE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*$")
+RANGE_MATCH_THRESHOLD = 0.5
+
+
+def detect_range_pattern(values: list[str]) -> tuple[str, str | None] | None:
+    """Flags a text column whose cells hold a numeric range like "4-10 yrs"
+    rather than one atomic value -- a different shape from both an ordinary
+    categorical column and a multi-value/tag column, since a chart over it
+    needs a single representative number per row (its midpoint, by default),
+    not the whole range string treated as one bar or exploded into tags.
+    `values` should be a sample of the column's non-null raw values. Returns
+    (separator, unit) -- currently "-" is the only supported separator, and
+    `unit` is the most common non-empty trailing token across matches (or
+    None if matches never had one) -- or None entirely if the column doesn't
+    look like a range column."""
+    if not values:
+        return None
+    matches = 0
+    units: dict[str, int] = {}
+    for value in values:
+        match = _RANGE_PATTERN.match(value)
+        if not match:
+            continue
+        matches += 1
+        unit = match.group(3).strip()
+        if unit:
+            units[unit] = units.get(unit, 0) + 1
+    if matches / len(values) < RANGE_MATCH_THRESHOLD:
+        return None
+    unit = max(units, key=units.get) if units else None
+    return "-", unit
+
 # Column-name tokens (after splitting snake_case/camelCase) that suggest an
 # identifier/code rather than a genuinely continuous quantity -- cardinality
 # alone can't distinguish "thousands of legitimate zip codes" from "a real

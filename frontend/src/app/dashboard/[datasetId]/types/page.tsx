@@ -243,6 +243,16 @@ export default function ColumnTypesPage() {
                             Multi-value ({col.multi_value_separator})
                           </span>
                         )}
+                        {col.range_separator && (
+                          <span
+                            title={`Cells look like a numeric range (e.g. "min${col.range_separator}max${
+                              col.range_unit ? ` ${col.range_unit}` : ""
+                            }")`}
+                            className="mt-1 block w-fit rounded bg-accent/20 px-1.5 py-0.5 text-[10px]"
+                          >
+                            Range{col.range_unit ? ` (${col.range_unit})` : ""}
+                          </span>
+                        )}
                         {col.rationale && <p className="mt-1 max-w-xs text-xs opacity-60">{col.rationale}</p>}
                         {col.needs_review && (
                           <button

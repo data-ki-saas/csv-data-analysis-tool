@@ -31,6 +31,42 @@ class Settings(BaseSettings):
     # since it's a logo, not a dataset file.
     max_logo_size_kb: int = 200
 
+    # ---- Value-editing / tag-column form limits (schemas.py Field(max_length=...)) ----
+    # Free-text "Ask AI to merge values, or replace text" command box (both
+    # the merge instruction and a literal/regex replace command share this).
+    value_edit_command_max_length: int = 300
+    # A literal replacement rule's `find`/`replace` text (POST .../replace/accept),
+    # independent of the command-box parsing above.
+    replacement_text_max_length: int = 300
+    # A multi-value column's optional prefix-separator marker (e.g. "-" in
+    # "Hybrid - Pune, Noida") and its tag separator (usually ",").
+    tag_prefix_separator_max_length: int = 40
+    tag_separator_max_length: int = 5
+    # How many tags a user can curate into one column's vocabulary.
+    tag_vocabulary_max_size: int = 200
+    # A dataset's editable description and a chart's editable title.
+    dataset_description_max_length: int = 200
+    chart_title_max_length: int = 200
+    # Free-text "Add custom chart" prompt -- generous enough for a
+    # fully-spelled-out parsing instruction (e.g. "parse experience_raw as
+    # 'min - max yrs', strip 'yrs', split on '-', average the two numbers...").
+    custom_chart_prompt_max_length: int = 500
+
+    # ---- Value-editing / tag-column pagination (the Edit Column dialog's
+    # "Current values"/"Tags" lists and their "Load more" button) ----
+    column_values_page_size: int = 200
+    column_values_max_page_size: int = 5000
+    tag_candidates_page_size: int = 200
+    tag_candidates_max_page_size: int = 5000
+
+    # ---- Range-column parsing (e.g. "4-10 yrs" -> a chartable numeric measure) ----
+    # A range column's separator (e.g. "-") and unit suffix (e.g. "yrs") to strip.
+    range_separator_max_length: int = 5
+    range_unit_max_length: int = 20
+    # How many (raw value, parsed value) pairs the "Range" panel's live
+    # preview shows -- a UI aid, not an exhaustive export.
+    range_preview_sample_size: int = 20
+
     cors_origins: str = "http://localhost:3000"
 
     supabase_url: str = ""

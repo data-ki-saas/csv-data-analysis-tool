@@ -123,6 +123,10 @@ export interface ColumnInfo {
   // delimited tags into one string (e.g. "Mumbai, Pune") -- the separator
   // auto-detected at ingest, or null if this column doesn't look multi-value.
   multi_value_separator: string | null;
+  // Set when this column's cells look like a numeric range (e.g. "4-10 yrs")
+  // -- the separator/unit auto-detected at ingest, or null if not range-shaped.
+  range_separator: string | null;
+  range_unit: string | null;
 }
 
 export interface DatasetInfo {
@@ -368,6 +372,58 @@ export async function updateTagConfig(datasetId: string, column: string, config:
 export async function addTagChart(datasetId: string, column: string, title?: string) {
   const response = await apiFetch(
     `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags/chart`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ title: title ?? null }),
+    }
+  );
+  return handleResponse<ChartRecommendation>(response);
+}
+
+export interface RangeConfig {
+  separator: string;
+  unit: string | null;
+  value_type: "midpoint" | "min" | "max";
+}
+
+export interface RangeSampleRow {
+  raw_value: string;
+  parsed_value: number | null;
+}
+
+export interface RangePreview {
+  dataset_id: string;
+  column: string;
+  config: RangeConfig;
+  sample: RangeSampleRow[];
+  parsed_count: number;
+  total_count: number;
+}
+
+export async function getRangePreview(datasetId: string, column: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/range`,
+    { headers: await authHeader() }
+  );
+  return handleResponse<RangePreview>(response);
+}
+
+export async function updateRangeConfig(datasetId: string, column: string, config: RangeConfig) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/range/config`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify(config),
+    }
+  );
+  return handleResponse<RangePreview>(response);
+}
+
+export async function addRangeChart(datasetId: string, column: string, title?: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/range/chart`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeader()) },

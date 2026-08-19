@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, Query, UploadFile
 
 from src.core.auth import CurrentUser, get_current_user
+from src.core.config import settings
 from src.datasets import service
 from src.datasets.schemas import (
     AcceptReplacementRequest,
     AcceptValueMergeRequest,
     AcceptValueMergeResponse,
+    AddRangeChartRequest,
     AddTagChartRequest,
     ChartRecommendation,
     ColumnValuesResponse,
@@ -14,6 +16,7 @@ from src.datasets.schemas import (
     DatasetSchemaResponse,
     GenerateInsightsRequest,
     InsightsResponse,
+    RangePreviewResponse,
     ReorderChartsRequest,
     ReportStrategyRequest,
     ReportStrategyResponse,
@@ -23,6 +26,7 @@ from src.datasets.schemas import (
     UpdateChartRequest,
     UpdateColumnRequest,
     UpdateDatasetRequest,
+    UpdateRangeConfigRequest,
     UpdateTagConfigRequest,
     UploadResponse,
     ValueMergeSuggestion,
@@ -98,7 +102,7 @@ async def update_column(
 async def get_column_values(
     dataset_id: str,
     column_name: str,
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int = Query(settings.column_values_page_size, ge=1, le=settings.column_values_max_page_size),
     user: CurrentUser = Depends(get_current_user),
 ) -> ColumnValuesResponse:
     return await service.get_column_values(dataset_id, column_name, user, limit=limit)
@@ -175,7 +179,7 @@ async def revert_column_value_replacement(
 async def get_column_tag_candidates(
     dataset_id: str,
     column_name: str,
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int = Query(settings.tag_candidates_page_size, ge=1, le=settings.tag_candidates_max_page_size),
     user: CurrentUser = Depends(get_current_user),
 ) -> TagCandidatesResponse:
     return await service.get_tag_candidates(dataset_id, column_name, user, limit=limit)
@@ -203,6 +207,41 @@ async def add_column_tag_chart(
     user: CurrentUser = Depends(get_current_user),
 ) -> ChartRecommendation:
     return await service.add_tag_chart(dataset_id, column_name, request.title, user)
+
+
+@router.get(
+    "/{dataset_id}/schema/columns/{column_name}/range", response_model=RangePreviewResponse
+)
+async def get_column_range_preview(
+    dataset_id: str,
+    column_name: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> RangePreviewResponse:
+    return await service.get_range_preview(dataset_id, column_name, user)
+
+
+@router.put(
+    "/{dataset_id}/schema/columns/{column_name}/range/config", response_model=RangePreviewResponse
+)
+async def update_column_range_config(
+    dataset_id: str,
+    column_name: str,
+    request: UpdateRangeConfigRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> RangePreviewResponse:
+    return await service.update_range_config(dataset_id, column_name, request, user)
+
+
+@router.post(
+    "/{dataset_id}/schema/columns/{column_name}/range/chart", response_model=ChartRecommendation
+)
+async def add_column_range_chart(
+    dataset_id: str,
+    column_name: str,
+    request: AddRangeChartRequest = AddRangeChartRequest(),
+    user: CurrentUser = Depends(get_current_user),
+) -> ChartRecommendation:
+    return await service.add_range_chart(dataset_id, column_name, request.title, user)
 
 
 @router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)
