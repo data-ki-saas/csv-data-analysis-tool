@@ -14,6 +14,7 @@ from src.datasets.profiling import (
     classify_column_with_confidence,
     compute_column_health,
     compute_dataset_health,
+    detect_multi_value_separator,
     generate_alias,
 )
 
@@ -45,6 +46,11 @@ class ColumnSchema:
     # recognized format -- otherwise those losses would silently lower the
     # health score with no indication of why.
     conversion_warning: str | None = None
+    # Set when this categorical column's cells look like they pack several
+    # delimited tags into one string (see profiling.detect_multi_value_separator)
+    # -- surfaced so the Column Types page can flag it and the Edit column
+    # dialog can offer tag extraction/vocabulary curation.
+    multi_value_separator: str | None = None
 
 
 @dataclass
@@ -112,6 +118,8 @@ _DATE_FORMAT_SAMPLE_SIZE = 500
 _NUMERIC_STRING_PATTERN = re.compile(r"^\s*-?\$?\s?(\d{1,3}(,\d{3})*|\d+)(\.\d+)?\s?%?\s*$")
 _NUMERIC_FORMAT_MATCH_THRESHOLD = 0.8
 _NUMERIC_FORMAT_SAMPLE_SIZE = 500
+
+_MULTI_VALUE_SAMPLE_SIZE = 500
 
 
 def _assert_readonly_select(sql: str) -> None:
@@ -207,6 +215,68 @@ def _column_transform_replace_clause(
             parts.append(f"{expr} AS {ident}")
 
     return f" REPLACE ({', '.join(parts)})" if parts else ""
+
+
+def _tag_source_expr(ident: str, prefix_separator: str | None) -> str:
+    """The text a multi-value column's cell should be split into tags from --
+    already reflecting any value_remaps/value_replacements (the caller passes
+    an `ident` that's read from the transformed view, not the raw column),
+    plus this feature's own prefix-stripping: if `prefix_separator` occurs in
+    the cell (e.g. "-" in "Hybrid - Pune, Noida"), only the text AFTER its
+    first occurrence is kept -- the prefix itself (a work-mode label, not a
+    tag) is discarded, not exploded into a bogus tag alongside the real ones."""
+    text_expr = f"CAST({ident} AS VARCHAR)"
+    if not prefix_separator:
+        return text_expr
+    sep_lit = _sql_string_literal(prefix_separator)
+    return (
+        f"CASE WHEN position({sep_lit} IN {text_expr}) > 0 "
+        f"THEN substr({text_expr}, position({sep_lit} IN {text_expr}) + length({sep_lit})) "
+        f"ELSE {text_expr} END"
+    )
+
+
+def build_tag_chart_sql(column: str, config: dict) -> str:
+    """Deterministic (no LLM involved) SQL for a "count of rows per tag"
+    chart on a multi-value column -- e.g. "location" holding "Mumbai, Pune"
+    becomes one count each for Mumbai and Pune, not one bar for the whole
+    packed string. `config`: {"prefix_separator", "tag_separator",
+    "vocabulary", "include_other"} (see schemas.TagConfig). Executed via the
+    same duckdb_manager.execute_query() every other chart uses, against the
+    "data" view that already has value_remaps/value_replacements applied --
+    so a tag chart reflects any merges/replacements made on this column too.
+
+    No vocabulary yet: every exploded tag counts, uncurated -- lets the
+    "Tags" panel show live candidates before the user has picked a vocabulary.
+    A curated vocabulary without "include_other": only vocabulary tags count
+    (everything else is silently excluded -- e.g. a stray "Remote" entry
+    with no city at all). With "include_other": every non-vocabulary tag is
+    folded into one "Other" bucket instead of being dropped, so the chart's
+    total still accounts for every row."""
+    ident = _quote_ident(column)
+    text_expr = _tag_source_expr(ident, config.get("prefix_separator"))
+    tag_sep_lit = _sql_string_literal(config.get("tag_separator") or ",")
+    vocabulary = config.get("vocabulary") or []
+    vocab_list = ", ".join(_sql_string_literal(v) for v in vocabulary)
+
+    predicates = ["tag != ''"]
+    if vocabulary and not config.get("include_other"):
+        predicates.append(f"tag IN ({vocab_list})")
+    label_expr = (
+        f"CASE WHEN tag IN ({vocab_list}) THEN tag ELSE 'Other' END"
+        if vocabulary and config.get("include_other")
+        else "tag"
+    )
+
+    return (
+        f"WITH exploded AS ("
+        f"SELECT trim(unnest(string_split({text_expr}, {tag_sep_lit}))) AS tag "
+        f"FROM data WHERE {ident} IS NOT NULL"
+        f") "
+        f"SELECT {label_expr} AS category, count(*) AS count "
+        f"FROM exploded WHERE {' AND '.join(predicates)} "
+        f"GROUP BY 1 ORDER BY 2 DESC"
+    )
 
 
 def _new_r2_connection() -> duckdb.DuckDBPyConnection:
@@ -440,6 +510,11 @@ def _profile_columns(
         )
         null_percentage = round((null_count / row_count) * 100, 1) if row_count else 0.0
 
+        multi_value_separator = None
+        if category.value == "categorical" and base_type in _TEXT_TYPES:
+            sample = _sample_non_null_values(conn, table, name, _MULTI_VALUE_SAMPLE_SIZE)
+            multi_value_separator = detect_multi_value_separator(sample)
+
         profiles.append(
             ColumnSchema(
                 name=name,
@@ -455,6 +530,7 @@ def _profile_columns(
                 distinct_count=distinct_count,
                 health_score=compute_column_health(row_count, null_count),
                 conversion_warning=conversion_warnings.get(name),
+                multi_value_separator=multi_value_separator,
             )
         )
     return profiles
@@ -713,6 +789,66 @@ class DuckDBManager:
             ident = _quote_ident(column)
             row = conn.execute(f"SELECT count(DISTINCT {ident}) FROM data").fetchone()
             return row[0]
+        finally:
+            conn.close()
+
+    async def tag_candidates(
+        self,
+        parquet_key: str,
+        column: str,
+        prefix_separator: str | None,
+        tag_separator: str,
+        limit: int = 200,
+        value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
+    ) -> list[tuple[str, int]]:
+        """Every distinct tag a multi-value column's cells explode into under
+        the given separators, with row counts, most frequent first -- backs
+        the "Tags" panel's candidate list a user curates into a vocabulary.
+        Uncurated (no vocabulary filter) by design: this is what lets the
+        panel show what's actually in the data before any vocabulary exists."""
+        return await run_in_threadpool(
+            self._tag_candidates_sync,
+            parquet_key,
+            column,
+            prefix_separator,
+            tag_separator,
+            limit,
+            value_remaps,
+            value_replacements,
+        )
+
+    def _tag_candidates_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        prefix_separator: str | None,
+        tag_separator: str,
+        limit: int,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
+    ) -> list[tuple[str, int]]:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            text_expr = _tag_source_expr(ident, prefix_separator)
+            tag_sep_lit = _sql_string_literal(tag_separator)
+            rows = conn.execute(
+                f"SELECT trim(tag) AS t, count(*) FROM ("
+                f"SELECT unnest(string_split({text_expr}, {tag_sep_lit})) AS tag "
+                f"FROM data WHERE {ident} IS NOT NULL"
+                f") WHERE trim(tag) != '' GROUP BY 1 ORDER BY 2 DESC LIMIT {int(limit)}"
+            ).fetchall()
+            return [(row[0], row[1]) for row in rows]
         finally:
             conn.close()
 

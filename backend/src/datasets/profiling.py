@@ -38,6 +38,17 @@ TEXT_CATEGORICAL_MAX_DISTINCT = 50
 TEXT_CATEGORICAL_DISTINCT_RATIO = 0.05
 FREE_TEXT_AVG_LENGTH = 40
 
+# Candidate delimiters for a "multi-value" categorical column -- one whose
+# cells actually hold a delimited list of several tags packed into one
+# string (e.g. a "location" column with values like "Mumbai, Pune"), rather
+# than one atomic label per row. Checked in this order since a comma is by
+# far the most common real-world delimiter for this pattern; a column
+# matching an earlier candidate never gets checked against a later one.
+MULTI_VALUE_SEPARATOR_CANDIDATES = [",", ";", "|", "/"]
+# Fraction of sampled non-null values that must split into 2+ non-blank
+# tokens under a candidate separator for the column to be flagged.
+MULTI_VALUE_MATCH_THRESHOLD = 0.5
+
 # Column-name tokens (after splitting snake_case/camelCase) that suggest an
 # identifier/code rather than a genuinely continuous quantity -- cardinality
 # alone can't distinguish "thousands of legitimate zip codes" from "a real
@@ -152,6 +163,27 @@ def classify_column_with_confidence(
         excess = (distinct_ratio - 0.5) / 0.5
         return ColumnCategory.FREE_TEXT, round(60.0 + min(excess, 1.0) * 39.0, 1)
     return ColumnCategory.CATEGORICAL, 55.0
+
+
+def detect_multi_value_separator(values: list[str]) -> str | None:
+    """Flags a categorical text column whose cells actually pack several
+    tags into one string (e.g. "Mumbai, Pune") rather than holding one
+    atomic label per row -- a genuinely different shape from an ordinary
+    categorical column, since a chart "by category" on it should count each
+    packed tag separately, not treat the whole packed string as one bar.
+    `values` should be a sample of the column's non-null raw values. Returns
+    the first candidate separator (see MULTI_VALUE_SEPARATOR_CANDIDATES) that
+    a large-enough fraction of the sample actually splits on into 2+
+    non-blank tokens, or None if the column doesn't look multi-value at all."""
+    if not values:
+        return None
+    for separator in MULTI_VALUE_SEPARATOR_CANDIDATES:
+        matches = sum(
+            1 for v in values if len([token for token in v.split(separator) if token.strip()]) >= 2
+        )
+        if matches / len(values) >= MULTI_VALUE_MATCH_THRESHOLD:
+            return separator
+    return None
 
 
 def compute_column_health(row_count: int, null_count: int) -> float:

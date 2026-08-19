@@ -99,6 +99,10 @@ export interface ColumnInfo {
   distinct_count: number;
   health_score: number;
   conversion_warning: string | null;
+  // Set when this categorical column's cells look like they pack several
+  // delimited tags into one string (e.g. "Mumbai, Pune") -- the separator
+  // auto-detected at ingest, or null if this column doesn't look multi-value.
+  multi_value_separator: string | null;
 }
 
 export interface DatasetInfo {
@@ -285,6 +289,60 @@ export async function revertColumnValueReplacement(datasetId: string, column: st
   url.searchParams.set("find", find);
   const response = await apiFetch(url.toString(), { method: "DELETE", headers: await authHeader() });
   return handleResponse<ColumnValues>(response);
+}
+
+export interface TagConfig {
+  prefix_separator: string | null;
+  tag_separator: string;
+  // The curated set of tags a chart should actually count -- empty means
+  // "not curated yet, count every exploded tag." This is what gives the
+  // user control over the size of the resulting chart.
+  vocabulary: string[];
+  include_other: boolean;
+}
+
+export interface TagCandidate {
+  tag: string;
+  count: number;
+}
+
+export interface TagCandidates {
+  dataset_id: string;
+  column: string;
+  candidates: TagCandidate[];
+  config: TagConfig;
+}
+
+export async function getTagCandidates(datasetId: string, column: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags`,
+    { headers: await authHeader() }
+  );
+  return handleResponse<TagCandidates>(response);
+}
+
+export async function updateTagConfig(datasetId: string, column: string, config: TagConfig) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags/config`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify(config),
+    }
+  );
+  return handleResponse<TagCandidates>(response);
+}
+
+export async function addTagChart(datasetId: string, column: string, title?: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags/chart`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ title: title ?? null }),
+    }
+  );
+  return handleResponse<ChartRecommendation>(response);
 }
 
 export interface QueryResponse {

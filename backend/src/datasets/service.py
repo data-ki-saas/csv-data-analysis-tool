@@ -12,7 +12,13 @@ from fastapi import HTTPException, UploadFile
 from src.core.auth import CurrentUser
 from src.core.config import settings
 from src.datasets import insights_cache_repository, repository
-from src.datasets.duckdb_manager import MalformedCsvError, QueryResult, UnsafeQueryError, duckdb_manager
+from src.datasets.duckdb_manager import (
+    MalformedCsvError,
+    QueryResult,
+    UnsafeQueryError,
+    build_tag_chart_sql,
+    duckdb_manager,
+)
 from src.datasets.profiling import CONFIDENCE_REVIEW_THRESHOLD
 from src.datasets.insights import generate_insights
 from src.datasets.schemas import (
@@ -28,6 +34,9 @@ from src.datasets.schemas import (
     InsightsResponse,
     ReplacementRule,
     ReportStrategyResponse,
+    TagCandidate,
+    TagCandidatesResponse,
+    TagConfig,
     UpdateChartRequest,
     UpdateDatasetRequest,
     UploadResponse,
@@ -111,6 +120,7 @@ async def _create_deduplicated_dataset(
             report_strategy=matched.report_strategy,
             value_remaps=matched.value_remaps,
             value_replacements=matched.value_replacements,
+            tag_configs=matched.tag_configs,
         )
     except Exception as exc:
         logger.exception(
@@ -819,6 +829,139 @@ async def revert_value_replacement(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     return await _column_values_response(updated_record, column_name)
+
+
+_TAG_CANDIDATES_LIMIT = 200
+
+
+def _get_tag_config(record: repository.DatasetRecord, column: ColumnInfo) -> TagConfig:
+    """The persisted config for this column, or a sensible default: the
+    separator profiling already auto-detected (see
+    profiling.detect_multi_value_separator) if one exists, else a plain
+    comma. Either way, an empty `vocabulary` means "not curated yet" -- see
+    TagConfig's own docstring."""
+    saved = (record.tag_configs or {}).get(column.name)
+    if saved is not None:
+        return TagConfig(**saved)
+    return TagConfig(tag_separator=column.multi_value_separator or ",")
+
+
+async def get_tag_candidates(dataset_id: str, column_name: str, user: CurrentUser) -> TagCandidatesResponse:
+    """Every distinct tag this multi-value column's cells explode into under
+    its current (persisted or default) separators, with row counts -- what
+    the "Tags" panel shows a user to curate into a vocabulary."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    column = _find_column(record, column_name)
+    _assert_categorical(column)
+    config = _get_tag_config(record, column)
+
+    candidates = await duckdb_manager.tag_candidates(
+        record.parquet_key,
+        column_name,
+        config.prefix_separator,
+        config.tag_separator,
+        _TAG_CANDIDATES_LIMIT,
+        record.value_remaps,
+        record.value_replacements,
+    )
+    return TagCandidatesResponse(
+        dataset_id=record.id,
+        column=column_name,
+        candidates=[TagCandidate(tag=tag, count=count) for tag, count in candidates],
+        config=config,
+    )
+
+
+async def update_tag_config(
+    dataset_id: str, column_name: str, config: TagConfig, user: CurrentUser
+) -> TagCandidatesResponse:
+    """Persists a column's tag-extraction config (separators + curated
+    vocabulary) and returns the fresh candidate list under it -- changing the
+    separators immediately re-splits the data, so the panel reflects the new
+    config right away rather than needing a separate reload."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    _assert_categorical(_find_column(record, column_name))
+
+    updated_configs = {**(record.tag_configs or {}), column_name: config.model_dump()}
+    updated_record = repository.update_dataset_tag_configs(dataset_id, user.id, updated_configs)
+    if updated_record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    candidates = await duckdb_manager.tag_candidates(
+        updated_record.parquet_key,
+        column_name,
+        config.prefix_separator,
+        config.tag_separator,
+        _TAG_CANDIDATES_LIMIT,
+        updated_record.value_remaps,
+        updated_record.value_replacements,
+    )
+    return TagCandidatesResponse(
+        dataset_id=updated_record.id,
+        column=column_name,
+        candidates=[TagCandidate(tag=tag, count=count) for tag, count in candidates],
+        config=config,
+    )
+
+
+async def add_tag_chart(
+    dataset_id: str, column_name: str, title: str | None, user: CurrentUser
+) -> ChartRecommendation:
+    """Adds a "count of rows per tag" chart for a multi-value column to the
+    dataset's report -- deterministic (see duckdb_manager.build_tag_chart_sql),
+    no LLM call needed, since the split/filter logic is already fully
+    specified by the column's saved (or default) TagConfig. Same
+    append-to-report_strategy pattern as add_custom_chart."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    column = _find_column(record, column_name)
+    _assert_categorical(column)
+    config = _get_tag_config(record, column)
+
+    sql = build_tag_chart_sql(column_name, config.model_dump())
+
+    result = None
+    error = None
+    try:
+        query_result = await duckdb_manager.execute_query(
+            record.parquet_key, sql, value_remaps=record.value_remaps, value_replacements=record.value_replacements
+        )
+        result = QueryResponse(
+            columns=query_result.columns,
+            rows=query_result.rows,
+            row_count=query_result.row_count,
+            truncated=query_result.truncated,
+        )
+    except (UnsafeQueryError, duckdb.Error) as exc:
+        error = str(exc)
+
+    new_chart = ChartRecommendation(
+        id=uuid.uuid4().hex,
+        source="custom",
+        column=column_name,
+        partition_type="categorical",
+        chart_type="bar",
+        title=(title or f"{column.alias} by tag").strip(),
+        rationale=f"Tag breakdown of {column.alias} -- one packed cell can count toward more than one tag.",
+        sql=sql,
+        result=result,
+        error=error,
+    )
+
+    existing, _ = _with_ids(record.report_strategy or [])
+    repository.update_dataset_report_strategy(
+        dataset_id, user.id, existing + [new_chart.model_dump(mode="json")]
+    )
+
+    return new_chart
 
 
 async def _build_chartable_payload(record: repository.DatasetRecord) -> list[dict]:

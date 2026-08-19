@@ -6,6 +6,7 @@ from src.datasets.schemas import (
     AcceptReplacementRequest,
     AcceptValueMergeRequest,
     AcceptValueMergeResponse,
+    AddTagChartRequest,
     ChartRecommendation,
     ColumnValuesResponse,
     CustomChartRequest,
@@ -18,9 +19,11 @@ from src.datasets.schemas import (
     ReportStrategyResponse,
     ReviewColumnsRequest,
     SuggestValueMergeRequest,
+    TagCandidatesResponse,
     UpdateChartRequest,
     UpdateColumnRequest,
     UpdateDatasetRequest,
+    UpdateTagConfigRequest,
     UploadResponse,
     ValueMergeSuggestion,
 )
@@ -161,6 +164,41 @@ async def revert_column_value_replacement(
     user: CurrentUser = Depends(get_current_user),
 ) -> ColumnValuesResponse:
     return await service.revert_value_replacement(dataset_id, column_name, find, user)
+
+
+@router.get(
+    "/{dataset_id}/schema/columns/{column_name}/tags", response_model=TagCandidatesResponse
+)
+async def get_column_tag_candidates(
+    dataset_id: str,
+    column_name: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> TagCandidatesResponse:
+    return await service.get_tag_candidates(dataset_id, column_name, user)
+
+
+@router.put(
+    "/{dataset_id}/schema/columns/{column_name}/tags/config", response_model=TagCandidatesResponse
+)
+async def update_column_tag_config(
+    dataset_id: str,
+    column_name: str,
+    request: UpdateTagConfigRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> TagCandidatesResponse:
+    return await service.update_tag_config(dataset_id, column_name, request, user)
+
+
+@router.post(
+    "/{dataset_id}/schema/columns/{column_name}/tags/chart", response_model=ChartRecommendation
+)
+async def add_column_tag_chart(
+    dataset_id: str,
+    column_name: str,
+    request: AddTagChartRequest = AddTagChartRequest(),
+    user: CurrentUser = Depends(get_current_user),
+) -> ChartRecommendation:
+    return await service.add_tag_chart(dataset_id, column_name, request.title, user)
 
 
 @router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)

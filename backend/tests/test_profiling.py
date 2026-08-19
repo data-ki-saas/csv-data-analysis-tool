@@ -7,6 +7,7 @@ from src.datasets.profiling import (
     classify_column_with_confidence,
     compute_column_health,
     compute_dataset_health,
+    detect_multi_value_separator,
     generate_alias,
 )
 
@@ -164,3 +165,32 @@ def test_classify_text_categorical_cap_still_floored_for_small_datasets():
     )
     assert category == ColumnCategory.CATEGORICAL
     assert confidence < CONFIDENCE_REVIEW_THRESHOLD
+
+
+def test_detect_multi_value_separator_finds_comma_packed_tags():
+    values = ["Mumbai, Pune", "Hyderabad, Gurugram, Bengaluru", "Chennai", "Delhi, Pune"]
+    assert detect_multi_value_separator(values) == ","
+
+
+def test_detect_multi_value_separator_prefers_earlier_candidate():
+    # Every value here also splits on "/" as a side effect of splitting on
+    # ",", but comma is checked first and already clears the threshold.
+    values = ["Mumbai, Pune", "Hyderabad/Gurugram, Bengaluru", "Chennai, Delhi"]
+    assert detect_multi_value_separator(values) == ","
+
+
+def test_detect_multi_value_separator_returns_none_for_atomic_values():
+    values = ["Mumbai", "Pune", "Hyderabad", "Chennai", "Delhi"]
+    assert detect_multi_value_separator(values) is None
+
+
+def test_detect_multi_value_separator_returns_none_below_threshold():
+    # Only 1 of 4 values actually packs multiple tags -- below the 50% match
+    # threshold, so this is treated as an ordinary (if slightly messy)
+    # categorical column, not flagged as multi-value.
+    values = ["Mumbai, Pune", "Hyderabad", "Chennai", "Delhi"]
+    assert detect_multi_value_separator(values) is None
+
+
+def test_detect_multi_value_separator_with_no_values_returns_none():
+    assert detect_multi_value_separator([]) is None

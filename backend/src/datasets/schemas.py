@@ -21,6 +21,10 @@ class ColumnInfo(BaseModel):
     distinct_count: int
     health_score: float
     conversion_warning: str | None = None
+    # Set when this categorical column's cells look like they pack several
+    # delimited tags into one string (e.g. "Mumbai, Pune") -- see
+    # profiling.detect_multi_value_separator.
+    multi_value_separator: str | None = None
 
 
 class DatasetPreview(BaseModel):
@@ -301,3 +305,44 @@ class AcceptValueMergeResponse(ColumnValuesResponse):
     # a running total, just this one action's effect, so the dialog can
     # confirm what just happened.
     rows_updated: int
+
+
+class TagConfig(BaseModel):
+    """How to explode one multi-value column's cell into individual tags,
+    and the curated vocabulary a tag chart should actually count against --
+    see duckdb_manager.build_tag_chart_sql. `vocabulary` is what gives the
+    user control over the size of the resulting chart: an empty vocabulary
+    means "not curated yet, count every exploded tag"; a non-empty one means
+    "only these"."""
+
+    # e.g. "-" to split "Hybrid - Pune, Noida" into a discarded "Hybrid"
+    # prefix and a "Pune, Noida" tag list. None: no prefix stripping.
+    prefix_separator: str | None = Field(default=None, max_length=5)
+    tag_separator: str = Field(default=",", min_length=1, max_length=5)
+    vocabulary: list[str] = Field(default=[], max_length=200)
+    # When vocabulary is set: fold every non-vocabulary tag into one "Other"
+    # bucket instead of excluding it, so the chart's total still covers
+    # every row. Ignored when vocabulary is empty (nothing to be "other" than).
+    include_other: bool = False
+
+
+class TagCandidate(BaseModel):
+    tag: str
+    count: int
+
+
+class TagCandidatesResponse(BaseModel):
+    dataset_id: str
+    column: str
+    candidates: list[TagCandidate]
+    config: TagConfig
+
+
+class UpdateTagConfigRequest(TagConfig):
+    pass
+
+
+class AddTagChartRequest(BaseModel):
+    # Optional override for the generated chart's title -- default is
+    # "{alias} by tag" (see service.add_tag_chart).
+    title: str | None = Field(default=None, max_length=200)

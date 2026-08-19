@@ -179,7 +179,13 @@ export default function ColumnTypesPage() {
 
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-medium">Columns</h2>
-            <div className="overflow-x-auto rounded border border-border">
+            <div
+              className={cn(
+                "overflow-x-auto rounded border border-border",
+                "[&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent",
+                "[scrollbar-width:thin]"
+              )}
+            >
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-border">
@@ -190,7 +196,9 @@ export default function ColumnTypesPage() {
                     <th className="px-3 py-2 font-medium">Confidence</th>
                     <th className="px-3 py-2 font-medium">Source</th>
                     <th className="px-3 py-2 font-medium">Nulls</th>
-                    <th className="px-3 py-2 font-medium">Actions</th>
+                    <th className="sticky right-0 border-l border-border bg-surface px-3 py-2 font-medium">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -227,6 +235,14 @@ export default function ColumnTypesPage() {
                             </option>
                           ))}
                         </select>
+                        {col.multi_value_separator && (
+                          <span
+                            title={`Cells look like they pack multiple values, separated by "${col.multi_value_separator}"`}
+                            className="mt-1 block w-fit rounded bg-accent/20 px-1.5 py-0.5 text-[10px]"
+                          >
+                            Multi-value ({col.multi_value_separator})
+                          </span>
+                        )}
                         {col.rationale && <p className="mt-1 max-w-xs text-xs opacity-60">{col.rationale}</p>}
                         {col.needs_review && (
                           <button
@@ -259,7 +275,7 @@ export default function ColumnTypesPage() {
                           </p>
                         )}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="sticky right-0 border-l border-border bg-surface px-3 py-2">
                         <IconButton label="Edit column" onClick={() => setEditingColumn(col)}>
                           <EditIcon />
                         </IconButton>

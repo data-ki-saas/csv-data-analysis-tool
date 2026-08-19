@@ -24,6 +24,7 @@ class DatasetRecord:
     report_strategy: list[dict] | None
     value_remaps: dict[str, list[dict]] | None
     value_replacements: dict[str, list[dict]] | None
+    tag_configs: dict[str, dict] | None
 
 
 def create_dataset(
@@ -42,6 +43,7 @@ def create_dataset(
     report_strategy: list[dict] | None = None,
     value_remaps: dict[str, list[dict]] | None = None,
     value_replacements: dict[str, list[dict]] | None = None,
+    tag_configs: dict[str, dict] | None = None,
 ) -> DatasetRecord:
     payload = {
         "id": str(uuid.uuid4()),
@@ -59,6 +61,7 @@ def create_dataset(
         "report_strategy": report_strategy,
         "value_remaps": value_remaps,
         "value_replacements": value_replacements,
+        "tag_configs": tag_configs,
     }
     result = get_supabase_client().table(_TABLE).insert(payload).execute()
     return DatasetRecord(**result.data[0])
@@ -167,6 +170,27 @@ def update_dataset_value_replacements(
         get_supabase_client()
         .table(_TABLE)
         .update({"value_replacements": value_replacements, "report_strategy": None})
+        .eq("id", dataset_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return DatasetRecord(**result.data[0])
+
+
+def update_dataset_tag_configs(
+    dataset_id: str, owner_id: str, tag_configs: dict[str, dict] | None
+) -> DatasetRecord | None:
+    """Persist a dataset's tag-extraction configs (separators + curated
+    vocabulary per multi-value column). Does NOT clear report_strategy --
+    unlike value_remaps/value_replacements, saving a tag config alone
+    changes nothing about how existing charts read the data; only adding a
+    tag chart (add_tag_chart) actually appends to report_strategy."""
+    result = (
+        get_supabase_client()
+        .table(_TABLE)
+        .update({"tag_configs": tag_configs})
         .eq("id", dataset_id)
         .eq("owner_id", owner_id)
         .execute()

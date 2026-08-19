@@ -2,16 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { ColumnInfo, ReplacementRule, ValueMergeRule } from "@/lib/api";
+import { ColumnInfo, ReplacementRule, TagConfig, ValueMergeRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   useAcceptValueMerge,
   useAcceptValueReplacement,
+  useAddTagChart,
   useColumnValues,
   useRevertValueMerge,
   useRevertValueReplacement,
   useSuggestValueMerge,
+  useTagCandidates,
   useUpdateColumn,
+  useUpdateTagConfig,
 } from "@/hooks/useDatasetSchema";
 import { CloseIcon, IconButton } from "@/components/IconButton";
 
@@ -108,6 +111,35 @@ function ReplacementRuleRow({
   );
 }
 
+const DEFAULT_TAG_CONFIG: TagConfig = {
+  prefix_separator: null,
+  tag_separator: ",",
+  vocabulary: [],
+  include_other: false,
+};
+
+function TagCandidateRow({
+  tag,
+  count,
+  checked,
+  onToggle,
+}: {
+  tag: string;
+  count: number;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5 text-sm">
+      <span className="flex min-w-0 items-center gap-2">
+        <input type="checkbox" checked={checked} onChange={onToggle} className="shrink-0" />
+        <span className="truncate">{tag}</span>
+      </span>
+      <span className="shrink-0 text-xs opacity-60">{count.toLocaleString()}</span>
+    </label>
+  );
+}
+
 export function EditColumnDialog({
   datasetId,
   column,
@@ -130,7 +162,40 @@ export function EditColumnDialog({
   const [aliasValue, setAliasValue] = useState(column.alias);
   const [command, setCommand] = useState("");
   const [lastRowsUpdated, setLastRowsUpdated] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"edit" | "rules">("edit");
+  const [activeTab, setActiveTab] = useState<"edit" | "rules" | "tags">("edit");
+
+  const tagCandidates = useTagCandidates(datasetId, column.name, activeTab === "tags" && isCategorical);
+  const updateTagConfig = useUpdateTagConfig(datasetId, column.name);
+  const addTagChart = useAddTagChart(datasetId, column.name);
+  // null = "no local edits yet, defer to the query result" -- same
+  // local-state-forks-from-query pattern as AliasEditor/notes elsewhere in
+  // this codebase. Once touched, this is the only source of truth for the
+  // form until Save persists it (after which it already matches the query).
+  const [localTagConfig, setLocalTagConfig] = useState<TagConfig | null>(null);
+  const [tagChartTitle, setTagChartTitle] = useState("");
+  const [tagChartAdded, setTagChartAdded] = useState(false);
+
+  const tagConfig = localTagConfig ?? tagCandidates.data?.config ?? DEFAULT_TAG_CONFIG;
+
+  function updateLocalTagConfig(patch: Partial<TagConfig>) {
+    setLocalTagConfig({ ...tagConfig, ...patch });
+  }
+
+  function toggleVocabularyTag(tag: string) {
+    const vocabulary = tagConfig.vocabulary.includes(tag)
+      ? tagConfig.vocabulary.filter((t) => t !== tag)
+      : [...tagConfig.vocabulary, tag];
+    updateLocalTagConfig({ vocabulary });
+  }
+
+  function handleSaveTagConfig() {
+    updateTagConfig.mutate(tagConfig);
+  }
+
+  function handleAddTagChart() {
+    setTagChartAdded(false);
+    addTagChart.mutate(tagChartTitle.trim() || undefined, { onSuccess: () => setTagChartAdded(true) });
+  }
 
   function handleRename() {
     const trimmed = aliasValue.trim();
@@ -228,21 +293,23 @@ export function EditColumnDialog({
         <>
           <div className="flex items-center justify-between gap-4 border-b border-border">
             <div className="flex gap-1">
-              {(["edit", "rules"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActiveTab(tab)}
-                  className={cn(
-                    "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
-                    activeTab === tab
-                      ? "border-accent font-medium"
-                      : "border-transparent opacity-60 hover:opacity-100"
-                  )}
-                >
-                  {tab === "edit" ? "Edit values" : `Active rules (${ruleCount})`}
-                </button>
-              ))}
+              {(isCategorical ? (["edit", "rules", "tags"] as const) : (["edit", "rules"] as const)).map(
+                (tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setActiveTab(tab)}
+                    className={cn(
+                      "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
+                      activeTab === tab
+                        ? "border-accent font-medium"
+                        : "border-transparent opacity-60 hover:opacity-100"
+                    )}
+                  >
+                    {tab === "edit" ? "Edit values" : tab === "rules" ? `Active rules (${ruleCount})` : "Tags"}
+                  </button>
+                )
+              )}
             </div>
             {isCategorical && values.data && (
               <span className="shrink-0 pb-1.5 text-xs opacity-60">
@@ -284,6 +351,117 @@ export function EditColumnDialog({
                 </p>
               )}
             </section>
+          )}
+
+          {activeTab === "tags" && (
+            <>
+              <section className="flex flex-col gap-1.5">
+                <h3 className="text-sm font-medium">Split cells into tags</h3>
+                <p className="text-xs opacity-60">
+                  {column.multi_value_separator
+                    ? `This column's cells look like they pack several values together, separated by "${column.multi_value_separator}".`
+                    : "Configure how this column's cells should be split into individual tags."}
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <label className="flex flex-col gap-1 text-xs">
+                    Prefix separator (optional)
+                    <input
+                      value={tagConfig.prefix_separator ?? ""}
+                      onChange={(e) => updateLocalTagConfig({ prefix_separator: e.target.value || null })}
+                      placeholder={`e.g. - (strips "Hybrid - " before splitting)`}
+                      className="w-64 rounded border border-border bg-surface px-2 py-1 text-sm"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
+                    Tag separator
+                    <input
+                      value={tagConfig.tag_separator}
+                      onChange={(e) => updateLocalTagConfig({ tag_separator: e.target.value || "," })}
+                      className="w-24 rounded border border-border bg-surface px-2 py-1 text-sm"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium">
+                    Vocabulary ({tagConfig.vocabulary.length} selected)
+                  </h3>
+                </div>
+                <p className="text-xs opacity-60">
+                  Check the tags that should count as their own bar in a chart -- this controls the size of
+                  the resulting chart. Leave everything unchecked to count every tag found.
+                </p>
+                {tagCandidates.isLoading && <p className="text-xs opacity-60">Loading…</p>}
+                {tagCandidates.isError && (
+                  <p className="text-xs text-red-600">{(tagCandidates.error as Error).message}</p>
+                )}
+                <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+                  {tagCandidates.data?.candidates.map((c) => (
+                    <TagCandidateRow
+                      key={c.tag}
+                      tag={c.tag}
+                      count={c.count}
+                      checked={tagConfig.vocabulary.includes(c.tag)}
+                      onToggle={() => toggleVocabularyTag(c.tag)}
+                    />
+                  ))}
+                </div>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={tagConfig.include_other}
+                    onChange={(e) => updateLocalTagConfig({ include_other: e.target.checked })}
+                    disabled={tagConfig.vocabulary.length === 0}
+                  />
+                  Include an &quot;Other&quot; bucket for tags not in the vocabulary
+                </label>
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleSaveTagConfig}
+                    disabled={updateTagConfig.isPending}
+                    className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground disabled:opacity-50"
+                  >
+                    {updateTagConfig.isPending ? "Saving…" : "Save configuration"}
+                  </button>
+                </div>
+                {updateTagConfig.isError && (
+                  <p className="text-xs text-red-600">{(updateTagConfig.error as Error).message}</p>
+                )}
+              </section>
+
+              <section className="flex flex-col gap-1.5 border-t border-border pt-4">
+                <h3 className="text-sm font-medium">Add to Visual Reports</h3>
+                <p className="text-xs opacity-60">
+                  Adds a &quot;count of rows per tag&quot; chart using the saved configuration above -- one
+                  packed cell can count toward more than one bar.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={tagChartTitle}
+                    onChange={(e) => setTagChartTitle(e.target.value)}
+                    placeholder={`${column.alias} by tag`}
+                    className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddTagChart}
+                    disabled={addTagChart.isPending}
+                    className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-accent-foreground disabled:opacity-50"
+                  >
+                    {addTagChart.isPending ? "Adding…" : "Add chart"}
+                  </button>
+                </div>
+                {tagChartAdded && (
+                  <p className="text-xs opacity-70">Chart added -- view it on the Visual Reports page.</p>
+                )}
+                {addTagChart.isError && (
+                  <p className="text-xs text-red-600">{(addTagChart.error as Error).message}</p>
+                )}
+              </section>
+            </>
           )}
 
           {activeTab === "edit" && (

@@ -2,14 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptColumnValueMerge,
   acceptColumnValueReplacement,
+  addTagChart,
   getColumnValues,
   getDatasetSchema,
+  getTagCandidates,
   reviewColumnTypes,
   revertColumnValueMerge,
   revertColumnValueReplacement,
   suggestColumnValueMerge,
+  TagConfig,
   updateColumn,
   UpdateColumnInput,
+  updateTagConfig,
   ValueMergeRule,
 } from "@/lib/api";
 
@@ -103,5 +107,38 @@ export function useRevertValueReplacement(datasetId: string, column: string) {
   return useMutation({
     mutationFn: (find: string) => revertColumnValueReplacement(datasetId, column, find),
     onSuccess: (data) => onMergeSuccess(queryClient, datasetId, column, data),
+  });
+}
+
+export function useTagCandidates(datasetId: string, column: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["tagCandidates", datasetId, column],
+    queryFn: () => getTagCandidates(datasetId, column),
+    enabled,
+  });
+}
+
+export function useUpdateTagConfig(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: TagConfig) => updateTagConfig(datasetId, column, config),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["tagCandidates", datasetId, column], data);
+    },
+  });
+}
+
+/** Adding a tag chart appends to the dataset's persisted report_strategy --
+ * same reasoning as onMergeSuccess above, but this endpoint doesn't return
+ * the dataset's columnValues/tagCandidates, only the new chart, so there's
+ * nothing to patch in place; both affected caches are just invalidated. */
+export function useAddTagChart(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (title?: string) => addTagChart(datasetId, column, title),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["datasetSchema", datasetId] });
+      queryClient.invalidateQueries({ queryKey: ["reportStrategy", datasetId] });
+    },
   });
 }
