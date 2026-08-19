@@ -26,6 +26,7 @@ from src.datasets.schemas import (
     DatasetSchemaResponse,
     GenerateInsightsRequest,
     InsightsResponse,
+    ReplacementRule,
     ReportStrategyResponse,
     UpdateChartRequest,
     UpdateDatasetRequest,
@@ -35,7 +36,7 @@ from src.datasets.schemas import (
 )
 from src.datasets.strategy_engine import suggest_custom_chart, suggest_visual_strategy
 from src.datasets.type_review import suggest_column_categories
-from src.datasets.value_merge import suggest_value_merge
+from src.datasets.value_merge import parse_replace_command, suggest_value_merge
 from src.llm.client import get_llm_provider
 from src.query.schemas import QueryResponse
 from src.storage import r2_client
@@ -93,7 +94,9 @@ async def _create_deduplicated_dataset(
     unlike the fresh-ingest path, no new R2 objects were written here, so
     there's nothing of this request's own to clean up (and cleaning up
     `matched`'s objects would break the dataset(s) still relying on them)."""
-    preview = await duckdb_manager.preview_dataset(matched.parquet_key, value_remaps=matched.value_remaps)
+    preview = await duckdb_manager.preview_dataset(
+        matched.parquet_key, value_remaps=matched.value_remaps, value_replacements=matched.value_replacements
+    )
     try:
         record = repository.create_dataset(
             owner_id=user.id,
@@ -107,6 +110,7 @@ async def _create_deduplicated_dataset(
             content_hash=content_hash,
             report_strategy=matched.report_strategy,
             value_remaps=matched.value_remaps,
+            value_replacements=matched.value_replacements,
         )
     except Exception as exc:
         logger.exception(
@@ -363,7 +367,9 @@ async def get_dataset_schema(dataset_id: str, user: CurrentUser) -> DatasetSchem
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    preview = await duckdb_manager.preview_dataset(record.parquet_key, value_remaps=record.value_remaps)
+    preview = await duckdb_manager.preview_dataset(
+        record.parquet_key, value_remaps=record.value_remaps, value_replacements=record.value_replacements
+    )
     return _to_schema_response(record, preview)
 
 
@@ -379,7 +385,9 @@ async def ai_review_column_types(
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    preview = await duckdb_manager.preview_dataset(record.parquet_key, value_remaps=record.value_remaps)
+    preview = await duckdb_manager.preview_dataset(
+        record.parquet_key, value_remaps=record.value_remaps, value_replacements=record.value_replacements
+    )
     samples = _sample_values(preview)
 
     columns = [ColumnInfo(**col) for col in record.schema]
@@ -481,7 +489,9 @@ async def update_column(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     preview = await duckdb_manager.preview_dataset(
-        updated_record.parquet_key, value_remaps=updated_record.value_remaps
+        updated_record.parquet_key,
+        value_remaps=updated_record.value_remaps,
+        value_replacements=updated_record.value_replacements,
     )
     return _to_schema_response(updated_record, preview)
 
@@ -500,46 +510,82 @@ def _assert_categorical(column: ColumnInfo) -> None:
     """Value merging is deliberately scoped to categorical columns: it only
     makes sense for a small, repeated set of labels, and every remapped
     column reads as text everywhere afterward (see
-    duckdb_manager._remap_replace_clause) -- not a tradeoff worth offering on
-    a continuous/datetime/free-text column."""
+    duckdb_manager._column_transform_expr) -- not a tradeoff worth offering
+    on a continuous/datetime column."""
     if column.category != "categorical":
         raise HTTPException(
             status_code=400, detail="Value merging is only available for categorical columns"
         )
 
 
+def _assert_text_like(column: ColumnInfo) -> None:
+    """Substring replacement (and the value list itself) is offered for
+    categorical OR free-text columns -- a literal find/replace over a
+    comments/description column is meaningful even though merging whole
+    values there wouldn't be. Not offered for continuous/datetime columns."""
+    if column.category not in ("categorical", "free_text"):
+        raise HTTPException(
+            status_code=400, detail="Value editing is only available for categorical or free-text columns"
+        )
+
+
+async def _column_values_response(
+    record: repository.DatasetRecord, column_name: str, response_cls: type = ColumnValuesResponse, **extra
+) -> ColumnValuesResponse:
+    """Shared tail of every column-values/edit endpoint: fetch the current
+    (post-rule) value counts, true distinct count, and both rule lists for
+    one column, and build the response. `response_cls`/`extra` let
+    accept_value_merge/accept_value_replacement reuse this for their
+    AcceptValueMergeResponse subclass's extra `rows_updated` field."""
+    counts = await duckdb_manager.column_value_counts(
+        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, record.value_replacements
+    )
+    distinct_count = await duckdb_manager.column_distinct_count(
+        record.parquet_key, column_name, record.value_remaps, record.value_replacements
+    )
+    return response_cls(
+        dataset_id=record.id,
+        column=column_name,
+        values=[ColumnValueCount(value=v, count=c) for v, c in counts],
+        rules=[ValueMergeRule(**r) for r in (record.value_remaps or {}).get(column_name, [])],
+        replacements=[ReplacementRule(**r) for r in (record.value_replacements or {}).get(column_name, [])],
+        distinct_count=distinct_count,
+        **extra,
+    )
+
+
 async def get_column_values(dataset_id: str, column_name: str, user: CurrentUser) -> ColumnValuesResponse:
-    """A categorical column's current distinct values (post already-accepted
-    merges) plus the merge rules in effect -- backs the "Edit column"
-    dialog's value list and its list of active, individually-revertible rules."""
+    """A categorical/free-text column's current distinct values (post
+    already-accepted edits) plus the merge/replacement rules in effect --
+    backs the "Edit column" dialog's value list and its list of active,
+    individually-revertible rules."""
     record = repository.get_dataset(dataset_id, user.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     column = _find_column(record, column_name)
-    _assert_categorical(column)
+    _assert_text_like(column)
 
-    rules = (record.value_remaps or {}).get(column_name, [])
-    counts = await duckdb_manager.column_value_counts(
-        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps
-    )
-    return ColumnValuesResponse(
-        dataset_id=record.id,
-        column=column_name,
-        values=[ColumnValueCount(value=value, count=count) for value, count in counts],
-        rules=[ValueMergeRule(**rule) for rule in rules],
-    )
+    return await _column_values_response(record, column_name)
 
 
 def _merged_remaps(
-    existing: dict[str, list[dict]] | None, column_name: str, groups: list[ValueMergeRule]
+    existing: dict[str, list[dict]] | None,
+    column_name: str,
+    groups: list[ValueMergeRule],
+    group_rows: list[int],
 ) -> dict[str, list[dict]]:
     """Merges newly-accepted `groups` into a column's existing rule list. A
     source value can only ever belong to one rule at a time -- accepting a
     group that claims a source already owned by an earlier rule moves it to
     the new rule (dropping it from the old one, and dropping the old rule
     entirely if that empties it) rather than leaving it ambiguously matched
-    by two WHEN clauses in the generated SQL."""
+    by two WHEN clauses in the generated SQL. `group_rows` (same length/order
+    as `groups`) accumulates into each rule's `rows_affected` -- a best-effort
+    running total, not a live re-count, so it can go slightly stale if a
+    source later moves to a different rule (the old rule's total isn't
+    decremented) -- acceptable for a "volume of change" indicator, not an
+    authoritative ledger."""
     existing = existing or {}
     current_rules = [dict(r) for r in existing.get(column_name, [])]
     new_sources = {s for g in groups for s in g.sources}
@@ -549,37 +595,77 @@ def _merged_remaps(
     current_rules = [r for r in current_rules if r["sources"]]
 
     by_target = {r["target"]: r for r in current_rules}
-    for group in groups:
+    for group, rows in zip(groups, group_rows):
         if group.target in by_target:
-            by_target[group.target]["sources"] = list(
-                dict.fromkeys(by_target[group.target]["sources"] + group.sources)
-            )
+            rule = by_target[group.target]
+            rule["sources"] = list(dict.fromkeys(rule["sources"] + group.sources))
+            rule["rows_affected"] = (rule.get("rows_affected") or 0) + rows
         else:
-            new_rule = {"target": group.target, "sources": list(group.sources)}
+            new_rule = {"target": group.target, "sources": list(group.sources), "rows_affected": rows}
             current_rules.append(new_rule)
             by_target[group.target] = new_rule
 
     return {**existing, column_name: current_rules}
 
 
+def _merged_replacements(
+    existing: dict[str, list[dict]] | None, column_name: str, rule: ReplacementRule
+) -> dict[str, list[dict]]:
+    """Adds or overwrites one replacement rule, keyed by its `find` text --
+    re-accepting the same `find` (e.g. with a different `replace`) updates
+    that rule in place rather than duplicating it."""
+    existing = existing or {}
+    current_rules = [dict(r) for r in existing.get(column_name, [])]
+    current_rules = [r for r in current_rules if r["find"] != rule.find]
+    current_rules.append(rule.model_dump())
+    return {**existing, column_name: current_rules}
+
+
 async def suggest_value_merge_for_column(
     dataset_id: str, column_name: str, command: str, user: CurrentUser
 ) -> ValueMergeSuggestion:
-    """Asks the LLM to translate a natural-language command (e.g. "merge NY
-    and New York City into New York") into structured merge groups against
-    the column's *current* state (including any already-accepted merges),
-    then computes what the value list would look like if those groups were
-    accepted -- without persisting anything, so the dialog can show a
-    before/after and let the user Accept or discard the proposal."""
+    """A single command box serves two kinds of edit:
+
+    - A literal `replace 'X' with 'Y'` command is parsed deterministically
+      (see value_merge.parse_replace_command) -- no LLM involved, since the
+      instruction is already fully specified.
+    - Anything else is sent to the LLM to translate into structured merge
+      groups (e.g. "merge NY and New York City into New York") against the
+      column's *current* state (including any already-accepted edits).
+
+    Either way, nothing is persisted -- this only computes what the value
+    list/category count would look like if the proposal were accepted, so
+    the dialog can show a before/after and let the user Accept or discard."""
     record = repository.get_dataset(dataset_id, user.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     column = _find_column(record, column_name)
+
+    parsed_replace = parse_replace_command(command)
+    if parsed_replace is not None:
+        _assert_text_like(column)
+        find, replace = parsed_replace
+        preview_replacements = _merged_replacements(
+            record.value_replacements, column_name, ReplacementRule(find=find, replace=replace)
+        )
+        preview_counts = await duckdb_manager.column_value_counts(
+            record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, preview_replacements
+        )
+        preview_distinct = await duckdb_manager.column_distinct_count(
+            record.parquet_key, column_name, record.value_remaps, preview_replacements
+        )
+        return ValueMergeSuggestion(
+            kind="replace",
+            replacement=ReplacementRule(find=find, replace=replace),
+            preview_values=[ColumnValueCount(value=v, count=c) for v, c in preview_counts],
+            preview_distinct_count=preview_distinct,
+        )
+
     _assert_categorical(column)
 
     counts = await duckdb_manager.column_value_counts(
-        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps
+        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, record.value_replacements
     )
     values = [{"value": value, "count": count} for value, count in counts]
 
@@ -590,17 +676,30 @@ async def suggest_value_merge_for_column(
 
     groups = [ValueMergeRule(**g) for g in raw_groups]
     if not groups:
+        distinct_count = await duckdb_manager.column_distinct_count(
+            record.parquet_key, column_name, record.value_remaps, record.value_replacements
+        )
         return ValueMergeSuggestion(
-            groups=[], preview_values=[ColumnValueCount(value=v, count=c) for v, c in counts]
+            groups=[],
+            preview_values=[ColumnValueCount(value=v, count=c) for v, c in counts],
+            preview_distinct_count=distinct_count,
         )
 
-    preview_remaps = _merged_remaps(record.value_remaps, column_name, groups)
+    group_rows = [
+        sum(dict(counts).get(source, 0) for source in group.sources if source != group.target)
+        for group in groups
+    ]
+    preview_remaps = _merged_remaps(record.value_remaps, column_name, groups, group_rows)
     preview_counts = await duckdb_manager.column_value_counts(
-        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, preview_remaps
+        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, preview_remaps, record.value_replacements
+    )
+    preview_distinct = await duckdb_manager.column_distinct_count(
+        record.parquet_key, column_name, preview_remaps, record.value_replacements
     )
     return ValueMergeSuggestion(
         groups=groups,
         preview_values=[ColumnValueCount(value=v, count=c) for v, c in preview_counts],
+        preview_distinct_count=preview_distinct,
     )
 
 
@@ -621,30 +720,22 @@ async def accept_value_merge(
     # opposed to the column's total row count or its all-time merged total.
     before_counts = dict(
         await duckdb_manager.column_value_counts(
-            record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps
+            record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, record.value_replacements
         )
     )
-    rows_updated = sum(
-        before_counts.get(source, 0)
+    group_rows = [
+        sum(before_counts.get(source, 0) for source in group.sources if source != group.target)
         for group in groups
-        for source in group.sources
-        if source != group.target
-    )
+    ]
+    rows_updated = sum(group_rows)
 
-    updated_remaps = _merged_remaps(record.value_remaps, column_name, groups)
+    updated_remaps = _merged_remaps(record.value_remaps, column_name, groups, group_rows)
     updated_record = repository.update_dataset_value_remaps(dataset_id, user.id, updated_remaps)
     if updated_record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    counts = await duckdb_manager.column_value_counts(
-        updated_record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, updated_record.value_remaps
-    )
-    return AcceptValueMergeResponse(
-        dataset_id=updated_record.id,
-        column=column_name,
-        values=[ColumnValueCount(value=v, count=c) for v, c in counts],
-        rules=[ValueMergeRule(**r) for r in (updated_record.value_remaps or {}).get(column_name, [])],
-        rows_updated=rows_updated,
+    return await _column_values_response(
+        updated_record, column_name, AcceptValueMergeResponse, rows_updated=rows_updated
     )
 
 
@@ -671,15 +762,63 @@ async def revert_value_merge(
     if updated_record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    counts = await duckdb_manager.column_value_counts(
-        updated_record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, updated_record.value_remaps
+    return await _column_values_response(updated_record, column_name)
+
+
+async def accept_value_replacement(
+    dataset_id: str, column_name: str, find: str, replace: str, user: CurrentUser
+) -> AcceptValueMergeResponse:
+    """Persists a proposed substring replacement -- permanently, but
+    individually revertible later via revert_value_replacement. See
+    duckdb_manager._column_transform_expr for how this and value_remaps
+    combine at read time, and CLAUDE.md/the dialog's "why revert always
+    works" note for why this is a genuine, not just cosmetic, revert."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    column = _find_column(record, column_name)
+    _assert_text_like(column)
+
+    rows_updated = await duckdb_manager.count_containing(
+        record.parquet_key, column_name, find, record.value_remaps, record.value_replacements
     )
-    return ColumnValuesResponse(
-        dataset_id=updated_record.id,
-        column=column_name,
-        values=[ColumnValueCount(value=v, count=c) for v, c in counts],
-        rules=[ValueMergeRule(**r) for r in remaining],
+
+    rule = ReplacementRule(find=find, replace=replace, rows_affected=rows_updated)
+    updated_replacements = _merged_replacements(record.value_replacements, column_name, rule)
+    updated_record = repository.update_dataset_value_replacements(dataset_id, user.id, updated_replacements)
+    if updated_record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    return await _column_values_response(
+        updated_record, column_name, AcceptValueMergeResponse, rows_updated=rows_updated
     )
+
+
+async def revert_value_replacement(
+    dataset_id: str, column_name: str, find: str, user: CurrentUser
+) -> ColumnValuesResponse:
+    """Permanently removes one active replacement rule (identified by its
+    `find` text) from a column -- values go back to containing that
+    substring exactly as originally uploaded."""
+    record = repository.get_dataset(dataset_id, user.id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    _find_column(record, column_name)
+
+    existing = record.value_replacements or {}
+    current_rules = existing.get(column_name, [])
+    remaining = [r for r in current_rules if r["find"] != find]
+    if len(remaining) == len(current_rules):
+        raise HTTPException(status_code=404, detail=f"No replacement rule found for {find!r}")
+
+    updated_replacements = {**existing, column_name: remaining}
+    updated_record = repository.update_dataset_value_replacements(dataset_id, user.id, updated_replacements)
+    if updated_record is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    return await _column_values_response(updated_record, column_name)
 
 
 async def _build_chartable_payload(record: repository.DatasetRecord) -> list[dict]:
@@ -692,7 +831,9 @@ async def _build_chartable_payload(record: repository.DatasetRecord) -> list[dic
     if not chartable:
         return []
 
-    preview = await duckdb_manager.preview_dataset(record.parquet_key, value_remaps=record.value_remaps)
+    preview = await duckdb_manager.preview_dataset(
+        record.parquet_key, value_remaps=record.value_remaps, value_replacements=record.value_replacements
+    )
     samples = _sample_values(preview)
     return [
         {
@@ -795,7 +936,7 @@ async def generate_report_strategy(
         error = None
         try:
             query_result = await duckdb_manager.execute_query(
-                record.parquet_key, suggestion["sql"], value_remaps=record.value_remaps
+                record.parquet_key, suggestion["sql"], value_remaps=record.value_remaps, value_replacements=record.value_replacements
             )
             result = QueryResponse(
                 columns=query_result.columns,
@@ -855,7 +996,7 @@ async def add_custom_chart(dataset_id: str, prompt: str, user: CurrentUser) -> C
     error = None
     try:
         query_result = await duckdb_manager.execute_query(
-            record.parquet_key, suggestion["sql"], value_remaps=record.value_remaps
+            record.parquet_key, suggestion["sql"], value_remaps=record.value_remaps, value_replacements=record.value_replacements
         )
         result = QueryResponse(
             columns=query_result.columns,

@@ -19,7 +19,11 @@ async def query_dataset(
 
     try:
         result = await duckdb_manager.execute_query(
-            record.parquet_key, request.sql, request.max_rows, value_remaps=record.value_remaps
+            record.parquet_key,
+            request.sql,
+            request.max_rows,
+            value_remaps=record.value_remaps,
+            value_replacements=record.value_replacements,
         )
     except UnsafeQueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

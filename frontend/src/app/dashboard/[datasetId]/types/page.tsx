@@ -186,6 +186,7 @@ export default function ColumnTypesPage() {
                     <th className="px-3 py-2 font-medium">Column</th>
                     <th className="px-3 py-2 font-medium">Sample values</th>
                     <th className="px-3 py-2 font-medium">Category</th>
+                    <th className="px-3 py-2 font-medium">Categories</th>
                     <th className="px-3 py-2 font-medium">Confidence</th>
                     <th className="px-3 py-2 font-medium">Source</th>
                     <th className="px-3 py-2 font-medium">Nulls</th>
@@ -237,6 +238,9 @@ export default function ColumnTypesPage() {
                             Ask AI about this column
                           </button>
                         )}
+                      </td>
+                      <td className="px-3 py-2 text-xs opacity-70">
+                        {col.category === "categorical" ? col.distinct_count.toLocaleString() : "—"}
                       </td>
                       <td className="px-3 py-2">
                         {col.needs_review && (

@@ -4,8 +4,45 @@ from src.datasets.duckdb_manager import (
     MalformedCsvError,
     UnsafeQueryError,
     _assert_readonly_select,
+    _column_transform_replace_clause,
     duckdb_manager,
 )
+
+
+def test_transform_clause_is_empty_with_no_rules():
+    assert _column_transform_replace_clause(None, None) == ""
+    assert _column_transform_replace_clause({}, {}) == ""
+
+
+def test_transform_clause_builds_merge_case():
+    clause = _column_transform_replace_clause({"city": [{"target": "NY", "sources": ["ny", "New York"]}]}, None)
+    assert clause.startswith(" REPLACE (")
+    assert "CASE WHEN CAST(\"city\" AS VARCHAR) IN ('ny', 'New York') THEN 'NY'" in clause
+    assert clause.count('AS "city"') == 1
+
+
+def test_transform_clause_chains_replacements_before_merge_case():
+    clause = _column_transform_replace_clause(
+        {"city": [{"target": "Delhi", "sources": ["Old Delhi"]}]},
+        {"city": [{"find": "Delhi / NCR", "replace": "Delhi"}]},
+    )
+    # The WHEN's own comparison must test against the *replaced* text, not
+    # the raw column -- i.e. REPLACE(...) nested directly inside CASE WHEN.
+    assert (
+        "CASE WHEN REPLACE(CAST(\"city\" AS VARCHAR), 'Delhi / NCR', 'Delhi') IN ('Old Delhi') THEN 'Delhi'"
+        in clause
+    )
+
+
+def test_transform_clause_escapes_single_quotes():
+    clause = _column_transform_replace_clause(None, {"city": [{"find": "O'Brien", "replace": "Obrien"}]})
+    assert "O''Brien" in clause
+
+
+def test_transform_clause_replacement_only_column_has_no_case():
+    clause = _column_transform_replace_clause(None, {"notes": [{"find": "foo", "replace": "bar"}]})
+    assert "CASE" not in clause
+    assert "REPLACE(CAST(\"notes\" AS VARCHAR), 'foo', 'bar') AS \"notes\"" in clause
 
 
 @pytest.mark.parametrize(

@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { ColumnInfo, ValueMergeRule } from "@/lib/api";
+import { ColumnInfo, ReplacementRule, ValueMergeRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   useAcceptValueMerge,
+  useAcceptValueReplacement,
   useColumnValues,
   useRevertValueMerge,
+  useRevertValueReplacement,
   useSuggestValueMerge,
   useUpdateColumn,
 } from "@/hooks/useDatasetSchema";
@@ -45,12 +47,54 @@ function DialogShell({ onClose, children }: { onClose: () => void; children: Rea
   );
 }
 
-function RuleRow({ rule, onRevert, disabled }: { rule: ValueMergeRule; onRevert: () => void; disabled: boolean }) {
+function RowsAffectedBadge({ rows }: { rows: number | null }) {
+  if (rows == null) return null;
+  return (
+    <span className="ml-2 shrink-0 rounded bg-border px-1.5 py-0.5 text-[10px] opacity-70">
+      {rows.toLocaleString()} row{rows === 1 ? "" : "s"}
+    </span>
+  );
+}
+
+function MergeRuleRow({ rule, onRevert, disabled }: { rule: ValueMergeRule; onRevert: () => void; disabled: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5 text-sm">
-      <div className="min-w-0">
-        <span className="font-medium">{rule.target}</span>
-        <span className="opacity-60"> ← {rule.sources.join(", ")}</span>
+      <div className="flex min-w-0 items-center">
+        <div className="min-w-0">
+          <span className="font-medium">{rule.target}</span>
+          <span className="opacity-60"> ← {rule.sources.join(", ")}</span>
+        </div>
+        <RowsAffectedBadge rows={rule.rows_affected} />
+      </div>
+      <button
+        type="button"
+        onClick={onRevert}
+        disabled={disabled}
+        className="shrink-0 text-xs underline opacity-70 hover:opacity-100 disabled:opacity-30"
+      >
+        Revert
+      </button>
+    </div>
+  );
+}
+
+function ReplacementRuleRow({
+  rule,
+  onRevert,
+  disabled,
+}: {
+  rule: ReplacementRule;
+  onRevert: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1.5 text-sm">
+      <div className="flex min-w-0 items-center">
+        <div className="min-w-0">
+          <span className="font-medium">&quot;{rule.find}&quot;</span>
+          <span className="opacity-60"> → &quot;{rule.replace}&quot;</span>
+        </div>
+        <RowsAffectedBadge rows={rule.rows_affected} />
       </div>
       <button
         type="button"
@@ -73,17 +117,20 @@ export function EditColumnDialog({
   column: ColumnInfo;
   onClose: () => void;
 }) {
-  const canMergeValues = column.category === "categorical";
-  const values = useColumnValues(datasetId, column.name, canMergeValues);
+  const isCategorical = column.category === "categorical";
+  const canEditValues = isCategorical || column.category === "free_text";
+  const values = useColumnValues(datasetId, column.name, canEditValues);
   const updateColumn = useUpdateColumn(datasetId);
   const suggest = useSuggestValueMerge(datasetId, column.name);
-  const accept = useAcceptValueMerge(datasetId, column.name);
-  const revert = useRevertValueMerge(datasetId, column.name);
+  const acceptMerge = useAcceptValueMerge(datasetId, column.name);
+  const acceptReplacement = useAcceptValueReplacement(datasetId, column.name);
+  const revertMerge = useRevertValueMerge(datasetId, column.name);
+  const revertReplacement = useRevertValueReplacement(datasetId, column.name);
 
   const [aliasValue, setAliasValue] = useState(column.alias);
   const [command, setCommand] = useState("");
   const [lastRowsUpdated, setLastRowsUpdated] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"merge" | "rules">("merge");
+  const [activeTab, setActiveTab] = useState<"edit" | "rules">("edit");
 
   function handleRename() {
     const trimmed = aliasValue.trim();
@@ -96,18 +143,42 @@ export function EditColumnDialog({
     suggest.mutate(command.trim(), { onSuccess: () => setCommand("") });
   }
 
-  function handleAccept() {
-    if (!suggest.data || suggest.data.groups.length === 0) return;
-    accept.mutate(suggest.data.groups, {
-      onSuccess: (data) => {
-        setLastRowsUpdated(data.rows_updated);
-        suggest.reset();
-      },
-    });
+  function clearProposal() {
+    suggest.reset();
   }
 
-  const proposal = suggest.data && suggest.data.groups.length > 0 ? suggest.data : null;
-  const ruleCount = values.data?.rules.length ?? 0;
+  function handleAccept() {
+    if (!suggest.data) return;
+    if (suggest.data.kind === "merge") {
+      if (suggest.data.groups.length === 0) return;
+      acceptMerge.mutate(suggest.data.groups, {
+        onSuccess: (data) => {
+          setLastRowsUpdated(data.rows_updated);
+          clearProposal();
+        },
+      });
+    } else if (suggest.data.replacement) {
+      const { find, replace } = suggest.data.replacement;
+      acceptReplacement.mutate(
+        { find, replace },
+        {
+          onSuccess: (data) => {
+            setLastRowsUpdated(data.rows_updated);
+            clearProposal();
+          },
+        }
+      );
+    }
+  }
+
+  const proposal =
+    suggest.data && (suggest.data.kind === "replace" || suggest.data.groups.length > 0) ? suggest.data : null;
+  const isAccepting = acceptMerge.isPending || acceptReplacement.isPending;
+  const acceptErrorMessage = ((acceptMerge.error ?? acceptReplacement.error) as Error | null)?.message;
+
+  const mergeRuleCount = values.data?.rules.length ?? 0;
+  const replacementRuleCount = values.data?.replacements.length ?? 0;
+  const ruleCount = mergeRuleCount + replacementRuleCount;
 
   return (
     <DialogShell onClose={onClose}>
@@ -147,53 +218,75 @@ export function EditColumnDialog({
         )}
       </section>
 
-      {!canMergeValues && (
+      {!canEditValues && (
         <p className="border-t border-border pt-4 text-xs opacity-60">
-          Value merging is only available for categorical columns.
+          Value editing is only available for categorical or free-text columns.
         </p>
       )}
 
-      {canMergeValues && (
+      {canEditValues && (
         <>
-          <div className="flex gap-1 border-b border-border">
-            {(["merge", "rules"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={cn(
-                  "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
-                  activeTab === tab
-                    ? "border-accent font-medium"
-                    : "border-transparent opacity-60 hover:opacity-100"
-                )}
-              >
-                {tab === "merge" ? "Merge values" : `Active rules (${ruleCount})`}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-4 border-b border-border">
+            <div className="flex gap-1">
+              {(["edit", "rules"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={cn(
+                    "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
+                    activeTab === tab
+                      ? "border-accent font-medium"
+                      : "border-transparent opacity-60 hover:opacity-100"
+                  )}
+                >
+                  {tab === "edit" ? "Edit values" : `Active rules (${ruleCount})`}
+                </button>
+              ))}
+            </div>
+            {isCategorical && values.data && (
+              <span className="shrink-0 pb-1.5 text-xs opacity-60">
+                {values.data.distinct_count.toLocaleString()} categories
+              </span>
+            )}
           </div>
 
           {activeTab === "rules" && (
             <section className="flex flex-col gap-1.5">
-              {ruleCount === 0 && <p className="text-xs opacity-60">No values merged yet.</p>}
+              {ruleCount === 0 && <p className="text-xs opacity-60">No values edited yet.</p>}
               <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
                 {values.data?.rules.map((rule) => (
-                  <RuleRow
-                    key={rule.target}
+                  <MergeRuleRow
+                    key={`merge-${rule.target}`}
                     rule={rule}
-                    disabled={revert.isPending}
+                    disabled={revertMerge.isPending}
                     onRevert={() => {
                       setLastRowsUpdated(null);
-                      revert.mutate(rule.target);
+                      revertMerge.mutate(rule.target);
+                    }}
+                  />
+                ))}
+                {values.data?.replacements.map((rule) => (
+                  <ReplacementRuleRow
+                    key={`replace-${rule.find}`}
+                    rule={rule}
+                    disabled={revertReplacement.isPending}
+                    onRevert={() => {
+                      setLastRowsUpdated(null);
+                      revertReplacement.mutate(rule.find);
                     }}
                   />
                 ))}
               </div>
-              {revert.isError && <p className="text-xs text-red-600">{(revert.error as Error).message}</p>}
+              {(revertMerge.isError || revertReplacement.isError) && (
+                <p className="text-xs text-red-600">
+                  {((revertMerge.error ?? revertReplacement.error) as Error).message}
+                </p>
+              )}
             </section>
           )}
 
-          {activeTab === "merge" && (
+          {activeTab === "edit" && (
             <>
               {lastRowsUpdated !== null && (
                 <p className="rounded border border-accent/50 bg-accent/5 px-3 py-1.5 text-xs">
@@ -222,16 +315,17 @@ export function EditColumnDialog({
               </section>
 
               <section className="flex flex-col gap-1.5 border-t border-border pt-4">
-                <h3 className="text-sm font-medium">Ask AI to merge values</h3>
+                <h3 className="text-sm font-medium">Ask AI to merge values, or replace text</h3>
                 <p className="text-xs opacity-60">
-                  e.g. &quot;merge all values that contain NY or New York City into New York&quot;
+                  e.g. &quot;merge all values that contain NY or New York City into New York&quot;, or a literal{" "}
+                  <code>Replace &apos;Delhi / NCR&apos; with &apos;Delhi&apos;</code>
                 </p>
                 <div className="flex gap-2">
                   <input
                     value={command}
                     onChange={(e) => setCommand(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-                    placeholder="Describe the merge…"
+                    placeholder="Describe the edit…"
                     className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
                   />
                   <button
@@ -247,41 +341,52 @@ export function EditColumnDialog({
                   <p className="text-xs text-red-600">{(suggest.error as Error).message}</p>
                 )}
                 {suggest.isSuccess && !proposal && (
-                  <p className="text-xs opacity-60">
-                    The AI didn&apos;t find any values to merge for that command.
-                  </p>
+                  <p className="text-xs opacity-60">The AI didn&apos;t find any values to change for that command.</p>
                 )}
 
                 {proposal && (
                   <div className="flex flex-col gap-2 rounded border border-accent/50 bg-accent/5 p-3">
-                    <p className="text-sm font-medium">Proposed merge</p>
-                    {proposal.groups.map((g) => (
-                      <p key={g.target} className="text-xs">
-                        <span className="font-medium">{g.target}</span>
-                        <span className="opacity-60"> ← {g.sources.join(", ")}</span>
+                    <p className="text-sm font-medium">
+                      {proposal.kind === "merge" ? "Proposed merge" : "Proposed replacement"}
+                    </p>
+                    {proposal.kind === "merge" &&
+                      proposal.groups.map((g) => (
+                        <p key={g.target} className="text-xs">
+                          <span className="font-medium">{g.target}</span>
+                          <span className="opacity-60"> ← {g.sources.join(", ")}</span>
+                        </p>
+                      ))}
+                    {proposal.kind === "replace" && proposal.replacement && (
+                      <p className="text-xs">
+                        <span className="font-medium">&quot;{proposal.replacement.find}&quot;</span>
+                        <span className="opacity-60"> → &quot;{proposal.replacement.replace}&quot;</span>
                       </p>
-                    ))}
+                    )}
+                    {isCategorical && values.data && (
+                      <p className="text-xs opacity-60">
+                        {values.data.distinct_count.toLocaleString()} → {proposal.preview_distinct_count.toLocaleString()}{" "}
+                        categories
+                      </p>
+                    )}
                     <div className="mt-1 flex gap-2">
                       <button
                         type="button"
                         onClick={handleAccept}
-                        disabled={accept.isPending}
+                        disabled={isAccepting}
                         className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground disabled:opacity-50"
                       >
-                        {accept.isPending ? "Applying…" : "Accept"}
+                        {isAccepting ? "Applying…" : "Accept"}
                       </button>
                       <button
                         type="button"
-                        onClick={() => suggest.reset()}
-                        disabled={accept.isPending}
+                        onClick={clearProposal}
+                        disabled={isAccepting}
                         className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
                       >
                         Discard
                       </button>
                     </div>
-                    {accept.isError && (
-                      <p className="text-xs text-red-600">{(accept.error as Error).message}</p>
-                    )}
+                    {acceptErrorMessage && <p className="text-xs text-red-600">{acceptErrorMessage}</p>}
                   </div>
                 )}
               </section>

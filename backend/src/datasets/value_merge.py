@@ -9,8 +9,33 @@ then strict server-side validation of every field before it's ever trusted.
 """
 
 import json
+import re
 
 from src.llm.providers.base import LLMProvider
+
+# Matches a literal "replace 'X' with 'Y'" command (straight or curly quotes,
+# case-insensitive) -- deliberately NOT sent to the LLM: unlike a merge
+# ("which values are duplicates of each other?", a judgment call), a literal
+# substring replacement is fully specified by the command itself, so parsing
+# it with a regex is both cheaper and more reliable than an LLM round trip.
+# Only commands matching this exact shape skip the LLM; anything else (e.g.
+# "merge NY and New York into New York") falls through to suggest_value_merge.
+_REPLACE_COMMAND = re.compile(
+    r"""^\s*replace\s+['"“”](?P<find>.+?)['"“”]\s+with\s+['"“”](?P<replace>.*?)['"“”]\s*$""",
+    re.IGNORECASE,
+)
+
+
+def parse_replace_command(command: str) -> tuple[str, str] | None:
+    """Returns (find, replace) if `command` is a literal replace instruction,
+    else None (the caller should fall back to the LLM-based merge flow)."""
+    match = _REPLACE_COMMAND.match(command)
+    if match is None:
+        return None
+    find = match.group("find").strip()
+    if not find:
+        return None
+    return find, match.group("replace").strip()
 
 SYSTEM_PROMPT = (
     "You merge similar or duplicate category values within one column, based on a "

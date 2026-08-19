@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Query, UploadFile
 
 from src.core.auth import CurrentUser, get_current_user
 from src.datasets import service
 from src.datasets.schemas import (
+    AcceptReplacementRequest,
     AcceptValueMergeRequest,
     AcceptValueMergeResponse,
     ChartRecommendation,
@@ -124,15 +125,42 @@ async def accept_column_value_merge(
 
 
 @router.delete(
-    "/{dataset_id}/schema/columns/{column_name}/merge/{target}", response_model=ColumnValuesResponse
+    "/{dataset_id}/schema/columns/{column_name}/merge", response_model=ColumnValuesResponse
 )
 async def revert_column_value_merge(
     dataset_id: str,
     column_name: str,
-    target: str,
+    target: str = Query(...),
     user: CurrentUser = Depends(get_current_user),
 ) -> ColumnValuesResponse:
+    # `target` is a query param, not a path segment -- a merge target/source
+    # can itself contain "/" (see the replace feature's own example, "Delhi /
+    # NCR"), which a path segment can't reliably carry even URL-encoded.
     return await service.revert_value_merge(dataset_id, column_name, target, user)
+
+
+@router.post(
+    "/{dataset_id}/schema/columns/{column_name}/replace/accept", response_model=AcceptValueMergeResponse
+)
+async def accept_column_value_replacement(
+    dataset_id: str,
+    column_name: str,
+    request: AcceptReplacementRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> AcceptValueMergeResponse:
+    return await service.accept_value_replacement(dataset_id, column_name, request.find, request.replace, user)
+
+
+@router.delete(
+    "/{dataset_id}/schema/columns/{column_name}/replace", response_model=ColumnValuesResponse
+)
+async def revert_column_value_replacement(
+    dataset_id: str,
+    column_name: str,
+    find: str = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+) -> ColumnValuesResponse:
+    return await service.revert_value_replacement(dataset_id, column_name, find, user)
 
 
 @router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)

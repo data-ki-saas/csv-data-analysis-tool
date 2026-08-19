@@ -186,6 +186,16 @@ export interface ColumnValueCount {
 export interface ValueMergeRule {
   target: string;
   sources: string[];
+  // How many rows this rule affected as of its last accept -- a best-effort
+  // cumulative figure, not a live re-count. null for rules from before this
+  // field existed.
+  rows_affected: number | null;
+}
+
+export interface ReplacementRule {
+  find: string;
+  replace: string;
+  rows_affected: number | null;
 }
 
 export interface ColumnValues {
@@ -193,6 +203,10 @@ export interface ColumnValues {
   column: string;
   values: ColumnValueCount[];
   rules: ValueMergeRule[];
+  replacements: ReplacementRule[];
+  // The column's true distinct-value count after current rules -- not
+  // capped like `values` is.
+  distinct_count: number;
 }
 
 export async function getColumnValues(datasetId: string, column: string) {
@@ -204,8 +218,14 @@ export async function getColumnValues(datasetId: string, column: string) {
 }
 
 export interface ValueMergeSuggestion {
+  // Discriminates which of the two fields below is populated -- a single
+  // command box serves both a literal "replace 'X' with 'Y'" (parsed
+  // deterministically, no LLM involved) and an AI-judged value merge.
+  kind: "merge" | "replace";
   groups: ValueMergeRule[];
+  replacement: ReplacementRule | null;
   preview_values: ColumnValueCount[];
+  preview_distinct_count: number;
 }
 
 export async function suggestColumnValueMerge(datasetId: string, column: string, command: string) {
@@ -239,10 +259,31 @@ export async function acceptColumnValueMerge(datasetId: string, column: string, 
 }
 
 export async function revertColumnValueMerge(datasetId: string, column: string, target: string) {
+  // `target` goes as a query param, not a path segment -- a merge
+  // target/source can itself contain "/" (see the replace feature's own
+  // "Delhi / NCR" example), which a path segment can't reliably carry.
+  const url = new URL(`${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge`);
+  url.searchParams.set("target", target);
+  const response = await apiFetch(url.toString(), { method: "DELETE", headers: await authHeader() });
+  return handleResponse<ColumnValues>(response);
+}
+
+export async function acceptColumnValueReplacement(datasetId: string, column: string, find: string, replace: string) {
   const response = await apiFetch(
-    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge/${encodeURIComponent(target)}`,
-    { method: "DELETE", headers: await authHeader() }
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/replace/accept`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ find, replace }),
+    }
   );
+  return handleResponse<AcceptMergeResult>(response);
+}
+
+export async function revertColumnValueReplacement(datasetId: string, column: string, find: string) {
+  const url = new URL(`${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/replace`);
+  url.searchParams.set("find", find);
+  const response = await apiFetch(url.toString(), { method: "DELETE", headers: await authHeader() });
   return handleResponse<ColumnValues>(response);
 }
 

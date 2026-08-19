@@ -220,10 +220,26 @@ class InsightsResponse(BaseModel):
 class ValueMergeRule(BaseModel):
     """One accepted or proposed merge: every value in `sources` reads as
     `target` from then on, everywhere this column is read (see
-    duckdb_manager._remap_replace_clause)."""
+    duckdb_manager._column_transform_replace_clause)."""
 
     target: str
     sources: list[str]
+    # How many rows this rule affected, as of the last time it was accepted
+    # or grown -- a best-effort, cumulative figure (not a live re-count), so
+    # the "Active rules" tab can show the volume of change each rule
+    # represents. None for rules that predate this field.
+    rows_affected: int | None = None
+
+
+class ReplacementRule(BaseModel):
+    """One literal substring replacement (e.g. "Delhi / NCR" -> "Delhi"),
+    applied to every value of a column before any ValueMergeRule -- see
+    duckdb_manager._column_transform_expr."""
+
+    find: str
+    replace: str
+    # Snapshotted at accept time, same caveat as ValueMergeRule.rows_affected.
+    rows_affected: int | None = None
 
 
 class ColumnValueCount(BaseModel):
@@ -232,36 +248,51 @@ class ColumnValueCount(BaseModel):
 
 
 class ColumnValuesResponse(BaseModel):
-    """A categorical column's current distinct values (post already-accepted
-    merges) plus the merge rules in effect -- backs the "Edit column"
-    dialog's value list and its list of active, individually-revertible
-    rules."""
+    """A categorical/free-text column's current distinct values (post
+    already-accepted edits) plus the merge and replacement rules in effect --
+    backs the "Edit column" dialog's value list and its list of active,
+    individually-revertible rules."""
 
     dataset_id: str
     column: str
     values: list[ColumnValueCount]
     rules: list[ValueMergeRule]
+    replacements: list[ReplacementRule] = []
+    # The column's true distinct-value count after current rules -- NOT
+    # capped like `values` is, so "N categories" stays accurate even past
+    # that cap.
+    distinct_count: int
 
 
 class SuggestValueMergeRequest(BaseModel):
-    # e.g. "merge all values that contain NY or New York City into New York" --
-    # a single-turn instruction against the column's current state, not a
-    # multi-turn chat (see src/datasets/value_merge.py).
+    # e.g. "merge all values that contain NY or New York City into New York",
+    # or a literal "replace 'Delhi / NCR' with 'Delhi'" -- a single-turn
+    # instruction against the column's current state, not a multi-turn chat
+    # (see src/datasets/value_merge.py).
     command: str = Field(min_length=1, max_length=300)
 
 
 class ValueMergeSuggestion(BaseModel):
-    """A proposed (not yet persisted) merge -- `groups` is what Accept would
-    write, `preview_values` is what the column's value list would look like
-    if it were accepted, so the dialog can show a before/after without
-    touching the stored rules yet."""
+    """A proposed (not yet persisted) edit. `kind` discriminates which of
+    `groups` (a merge) or `replacement` (a literal substring replace) is
+    populated. `preview_values`/`preview_distinct_count` are what the
+    column's value list/category count would look like if it were accepted,
+    so the dialog can show a before/after without touching stored rules yet."""
 
-    groups: list[ValueMergeRule]
+    kind: Literal["merge", "replace"] = "merge"
+    groups: list[ValueMergeRule] = []
+    replacement: ReplacementRule | None = None
     preview_values: list[ColumnValueCount]
+    preview_distinct_count: int
 
 
 class AcceptValueMergeRequest(BaseModel):
     groups: list[ValueMergeRule] = Field(min_length=1)
+
+
+class AcceptReplacementRequest(BaseModel):
+    find: str = Field(min_length=1, max_length=300)
+    replace: str = Field(max_length=300)
 
 
 class AcceptValueMergeResponse(ColumnValuesResponse):

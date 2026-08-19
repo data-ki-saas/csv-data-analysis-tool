@@ -23,6 +23,7 @@ class DatasetRecord:
     content_hash: str | None
     report_strategy: list[dict] | None
     value_remaps: dict[str, list[dict]] | None
+    value_replacements: dict[str, list[dict]] | None
 
 
 def create_dataset(
@@ -40,6 +41,7 @@ def create_dataset(
     notes: str | None = None,
     report_strategy: list[dict] | None = None,
     value_remaps: dict[str, list[dict]] | None = None,
+    value_replacements: dict[str, list[dict]] | None = None,
 ) -> DatasetRecord:
     payload = {
         "id": str(uuid.uuid4()),
@@ -56,6 +58,7 @@ def create_dataset(
         "content_hash": content_hash,
         "report_strategy": report_strategy,
         "value_remaps": value_remaps,
+        "value_replacements": value_replacements,
     }
     result = get_supabase_client().table(_TABLE).insert(payload).execute()
     return DatasetRecord(**result.data[0])
@@ -145,6 +148,25 @@ def update_dataset_value_remaps(
         get_supabase_client()
         .table(_TABLE)
         .update({"value_remaps": value_remaps, "report_strategy": None})
+        .eq("id", dataset_id)
+        .eq("owner_id", owner_id)
+        .execute()
+    )
+    if not result.data:
+        return None
+    return DatasetRecord(**result.data[0])
+
+
+def update_dataset_value_replacements(
+    dataset_id: str, owner_id: str, value_replacements: dict[str, list[dict]] | None
+) -> DatasetRecord | None:
+    """Persist a dataset's substring-replacement rules. Also clears the
+    cached report_strategy in the same statement -- same reasoning as
+    update_dataset_value_remaps."""
+    result = (
+        get_supabase_client()
+        .table(_TABLE)
+        .update({"value_replacements": value_replacements, "report_strategy": None})
         .eq("id", dataset_id)
         .eq("owner_id", owner_id)
         .execute()

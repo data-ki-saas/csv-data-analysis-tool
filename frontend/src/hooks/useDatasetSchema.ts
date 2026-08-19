@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptColumnValueMerge,
+  acceptColumnValueReplacement,
   getColumnValues,
   getDatasetSchema,
   reviewColumnTypes,
   revertColumnValueMerge,
+  revertColumnValueReplacement,
   suggestColumnValueMerge,
   updateColumn,
   UpdateColumnInput,
@@ -83,6 +85,23 @@ export function useRevertValueMerge(datasetId: string, column: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (target: string) => revertColumnValueMerge(datasetId, column, target),
+    onSuccess: (data) => onMergeSuccess(queryClient, datasetId, column, data),
+  });
+}
+
+export function useAcceptValueReplacement(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ find, replace }: { find: string; replace: string }) =>
+      acceptColumnValueReplacement(datasetId, column, find, replace),
+    onSuccess: (data) => onMergeSuccess(queryClient, datasetId, column, data),
+  });
+}
+
+export function useRevertValueReplacement(datasetId: string, column: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (find: string) => revertColumnValueReplacement(datasetId, column, find),
     onSuccess: (data) => onMergeSuccess(queryClient, datasetId, column, data),
   });
 }

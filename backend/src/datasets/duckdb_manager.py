@@ -141,36 +141,70 @@ def _sql_string_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _remap_replace_clause(value_remaps: dict[str, list[dict]] | None) -> str:
+def _column_transform_expr(
+    ident: str,
+    replacements: list[dict] | None,
+    merge_rules: list[dict] | None,
+) -> str | None:
+    """The read-time expression for one column, or None if it has neither
+    replacement nor merge rules (the common case). Replacements are chained
+    first (each a literal substring REPLACE, applied in rule order) and
+    merge rules are matched against the *result* of that chain -- so a merge
+    added after a replacement sees already-replaced text, not the original.
+    Always text: once a column has any rule, both branches of the resulting
+    CASE (and every REPLACE) operate on VARCHAR, so it reads as text
+    everywhere from then on, even for values no rule touches."""
+    text_expr = f"CAST({ident} AS VARCHAR)"
+    for rule in replacements or []:
+        text_expr = f"REPLACE({text_expr}, {_sql_string_literal(rule['find'])}, {_sql_string_literal(rule['replace'])})"
+
+    when_clauses = []
+    for rule in merge_rules or []:
+        sources = rule.get("sources") or []
+        if not sources:
+            continue
+        in_list = ", ".join(_sql_string_literal(s) for s in sources)
+        when_clauses.append(f"WHEN {text_expr} IN ({in_list}) THEN {_sql_string_literal(rule['target'])}")
+
+    if when_clauses:
+        return f"CASE {' '.join(when_clauses)} ELSE {text_expr} END"
+    if replacements:
+        return text_expr
+    return None
+
+
+def _scope_to_column(
+    rules: dict[str, list[dict]] | None, column: str
+) -> dict[str, list[dict]] | None:
+    """Narrows a dataset-wide rules dict down to just one column's own rules
+    -- avoids building a REPLACE clause for every edited column when only one
+    is actually being read (column_value_counts, count_containing)."""
+    return {column: rules[column]} if rules and column in rules else None
+
+
+def _column_transform_replace_clause(
+    value_remaps: dict[str, list[dict]] | None,
+    value_replacements: dict[str, list[dict]] | None,
+) -> str:
     """Builds the `REPLACE (...)` clause of a `SELECT * REPLACE (...)` that
-    applies every column's accepted value-merge rules at read time -- the
-    Parquet file itself is never rewritten (see CLAUDE.md), so a merge can
-    only ever be layered on as a view-time CASE expression. Every remapped
-    column is cast to VARCHAR (both the matched and the fall-through branch,
-    since a CASE's branches must share one output type) -- once a column has
-    any merge rule, it reads as text everywhere from then on, even for
-    values no rule touches. Returns "" (no REPLACE clause at all) when there's
-    nothing to remap, so callers can build a plain `SELECT * FROM ...` for the
-    overwhelmingly common case of a dataset with no merges."""
-    if not value_remaps:
+    applies every column's accepted merge and substring-replacement rules at
+    read time -- the Parquet file itself is never rewritten (see CLAUDE.md),
+    so an edit can only ever be layered on as a view-time expression, never
+    an in-place write. Returns "" (no REPLACE clause at all) when there's
+    nothing to transform, so callers can build a plain `SELECT * FROM ...`
+    for the overwhelmingly common case of a dataset with no edits."""
+    columns = set(value_remaps or {}) | set(value_replacements or {})
+    if not columns:
         return ""
 
     parts = []
-    for column, rules in value_remaps.items():
-        if not rules:
-            continue
+    for column in columns:
         ident = _quote_ident(column)
-        text_ident = f"CAST({ident} AS VARCHAR)"
-        when_clauses = []
-        for rule in rules:
-            sources = rule.get("sources") or []
-            if not sources:
-                continue
-            in_list = ", ".join(_sql_string_literal(s) for s in sources)
-            when_clauses.append(f"WHEN {text_ident} IN ({in_list}) THEN {_sql_string_literal(rule['target'])}")
-        if when_clauses:
-            case_expr = f"CASE {' '.join(when_clauses)} ELSE {text_ident} END"
-            parts.append(f"{case_expr} AS {ident}")
+        expr = _column_transform_expr(
+            ident, (value_replacements or {}).get(column), (value_remaps or {}).get(column)
+        )
+        if expr is not None:
+            parts.append(f"{expr} AS {ident}")
 
     return f" REPLACE ({', '.join(parts)})" if parts else ""
 
@@ -476,13 +510,21 @@ class DuckDBManager:
         sql: str,
         max_rows: int | None = None,
         value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
     ) -> QueryResult:
         max_rows = max_rows or settings.query_max_rows
         _assert_readonly_select(sql)
-        return await run_in_threadpool(self._execute_sync, parquet_key, sql, max_rows, value_remaps)
+        return await run_in_threadpool(
+            self._execute_sync, parquet_key, sql, max_rows, value_remaps, value_replacements
+        )
 
     def _execute_sync(
-        self, parquet_key: str, sql: str, max_rows: int, value_remaps: dict[str, list[dict]] | None
+        self,
+        parquet_key: str,
+        sql: str,
+        max_rows: int,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
     ) -> QueryResult:
         # DuckDB doesn't support prepared parameters in CREATE VIEW, so the URI is
         # interpolated directly — safe here because parquet_key is always a
@@ -492,7 +534,7 @@ class DuckDBManager:
 
         conn = _new_r2_connection()
         try:
-            replace_clause = _remap_replace_clause(value_remaps)
+            replace_clause = _column_transform_replace_clause(value_remaps, value_replacements)
             conn.execute(
                 f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
             )
@@ -514,21 +556,28 @@ class DuckDBManager:
         parquet_key: str,
         limit: int = 20,
         value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
     ) -> QueryResult:
         """A fixed, non-user-supplied `SELECT * LIMIT n` against the stored
         Parquet — used by the schema API to serve a fresh preview without
         needing the readonly-SQL guard that arbitrary query SQL requires."""
-        return await run_in_threadpool(self._preview_sync, parquet_key, limit, value_remaps)
+        return await run_in_threadpool(
+            self._preview_sync, parquet_key, limit, value_remaps, value_replacements
+        )
 
     def _preview_sync(
-        self, parquet_key: str, limit: int, value_remaps: dict[str, list[dict]] | None
+        self,
+        parquet_key: str,
+        limit: int,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
     ) -> QueryResult:
         if "'" in parquet_key or ";" in parquet_key:
             raise UnsafeQueryError("Invalid dataset storage key")
 
         conn = _new_r2_connection()
         try:
-            replace_clause = _remap_replace_clause(value_remaps)
+            replace_clause = _column_transform_replace_clause(value_remaps, value_replacements)
             return _preview(
                 conn, f"read_parquet('{_s3_uri(parquet_key)}')", int(limit), replace_clause
             )
@@ -541,14 +590,15 @@ class DuckDBManager:
         column: str,
         limit: int = 200,
         value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
     ) -> list[tuple[str, int]]:
-        """Distinct values (as their string representation, post-remap) and
+        """Distinct values (as their string representation, post-edit) and
         row counts for one column, most frequent first -- backs the "Edit
         column" dialog's value list. Capped at `limit` distinct values; a
         column with more distinct values than that only shows its most
         common ones, since this is a UI aid, not an exhaustive export."""
         return await run_in_threadpool(
-            self._column_value_counts_sync, parquet_key, column, limit, value_remaps
+            self._column_value_counts_sync, parquet_key, column, limit, value_remaps, value_replacements
         )
 
     def _column_value_counts_sync(
@@ -557,6 +607,7 @@ class DuckDBManager:
         column: str,
         limit: int,
         value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
     ) -> list[tuple[str, int]]:
         if "'" in parquet_key or ";" in parquet_key:
             raise UnsafeQueryError("Invalid dataset storage key")
@@ -564,10 +615,11 @@ class DuckDBManager:
         conn = _new_r2_connection()
         try:
             # Only this column's own rules matter for its value list -- no
-            # need to build a REPLACE clause for every remapped column in the
+            # need to build a REPLACE clause for every edited column in the
             # dataset just to read one of them.
-            scoped_remaps = {column: value_remaps[column]} if value_remaps and column in value_remaps else None
-            replace_clause = _remap_replace_clause(scoped_remaps)
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
             conn.execute(
                 f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
             )
@@ -577,6 +629,90 @@ class DuckDBManager:
                 f"WHERE {ident} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT {int(limit)}"
             ).fetchall()
             return [(row[0], row[1]) for row in rows]
+        finally:
+            conn.close()
+
+    async def count_containing(
+        self,
+        parquet_key: str,
+        column: str,
+        substring: str,
+        value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
+    ) -> int:
+        """How many rows' current text for `column` (after whatever rules
+        already apply, passed in via value_remaps/value_replacements)
+        contains `substring` -- used to report how many rows a *new*
+        replacement rule is about to affect, before it's persisted."""
+        return await run_in_threadpool(
+            self._count_containing_sync, parquet_key, column, substring, value_remaps, value_replacements
+        )
+
+    def _count_containing_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        substring: str,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
+    ) -> int:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            row = conn.execute(
+                f"SELECT count(*) FROM data WHERE contains(CAST({ident} AS VARCHAR), {_sql_string_literal(substring)})"
+            ).fetchone()
+            return row[0]
+        finally:
+            conn.close()
+
+    async def column_distinct_count(
+        self,
+        parquet_key: str,
+        column: str,
+        value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
+    ) -> int:
+        """The column's true distinct-value count after whatever rules
+        already apply -- NOT capped like column_value_counts' returned list,
+        so it stays accurate even if the column has more distinct values
+        than that list shows. Backs the "N categories" figure shown in the
+        Column Types listing and the Edit column dialog, so a user can see
+        how much a proposed merge/replace would shrink that number by."""
+        return await run_in_threadpool(
+            self._column_distinct_count_sync, parquet_key, column, value_remaps, value_replacements
+        )
+
+    def _column_distinct_count_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
+    ) -> int:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            row = conn.execute(f"SELECT count(DISTINCT {ident}) FROM data").fetchone()
+            return row[0]
         finally:
             conn.close()
 
