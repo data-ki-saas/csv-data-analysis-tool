@@ -236,12 +236,16 @@ class ValueMergeRule(BaseModel):
 
 
 class ReplacementRule(BaseModel):
-    """One literal substring replacement (e.g. "Delhi / NCR" -> "Delhi"),
-    applied to every value of a column before any ValueMergeRule -- see
-    duckdb_manager._column_transform_expr."""
+    """One replacement, applied to every value of a column before any
+    ValueMergeRule -- see duckdb_manager._column_transform_expr. `find` is
+    either a literal substring (e.g. "Delhi / NCR" -> "Delhi") or, when
+    `is_regex` is set, a regular expression (DuckDB's RE2-based dialect,
+    e.g. "Kolkata\\(.*\\)" -> "Kolkata" to strip any parenthetical) matched
+    and replaced globally (every occurrence, not just the first)."""
 
     find: str
     replace: str
+    is_regex: bool = False
     # Snapshotted at accept time, same caveat as ValueMergeRule.rows_affected.
     rows_affected: int | None = None
 
@@ -297,6 +301,7 @@ class AcceptValueMergeRequest(BaseModel):
 class AcceptReplacementRequest(BaseModel):
     find: str = Field(min_length=1, max_length=300)
     replace: str = Field(max_length=300)
+    is_regex: bool = False
 
 
 class AcceptValueMergeResponse(ColumnValuesResponse):
@@ -316,8 +321,11 @@ class TagConfig(BaseModel):
     "only these"."""
 
     # e.g. "-" to split "Hybrid - Pune, Noida" into a discarded "Hybrid"
-    # prefix and a "Pune, Noida" tag list. None: no prefix stripping.
-    prefix_separator: str | None = Field(default=None, max_length=5)
+    # prefix and a "Pune, Noida" tag list. None: no prefix stripping. Capped
+    # generously (not tightly like tag_separator) since this is realistically
+    # typed as a short marker string (e.g. "-", " - ", "Mode:"), not always a
+    # single character.
+    prefix_separator: str | None = Field(default=None, max_length=40)
     tag_separator: str = Field(default=",", min_length=1, max_length=5)
     vocabulary: list[str] = Field(default=[], max_length=200)
     # When vocabulary is set: fold every non-vocabulary tag into one "Other"
@@ -336,6 +344,10 @@ class TagCandidatesResponse(BaseModel):
     column: str
     candidates: list[TagCandidate]
     config: TagConfig
+    # The true, uncapped count of distinct tags -- NOT capped like
+    # `candidates` is, so the "Tags" panel's "Load more" can tell whether
+    # there's more to page through.
+    total_tags: int
 
 
 class UpdateTagConfigRequest(TagConfig):

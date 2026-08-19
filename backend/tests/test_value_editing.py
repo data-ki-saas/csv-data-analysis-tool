@@ -85,6 +85,19 @@ async def test_get_column_values_returns_categorical_counts(client, cities_csv_p
     assert body["replacements"] == []
 
 
+async def test_get_column_values_limit_paginates_and_reports_the_true_total(client, cities_csv_path):
+    dataset_id = await _upload(client, cities_csv_path)
+    response = await client.get(
+        f"/api/datasets/{dataset_id}/schema/columns/city/values", params={"limit": 2}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["values"]) == 2
+    # distinct_count is the true, uncapped total -- unaffected by `limit` --
+    # so the dialog's "Load more" can tell there's more beyond this page.
+    assert body["distinct_count"] == 6
+
+
 async def test_get_column_values_rejects_continuous_column(client, cities_csv_path):
     dataset_id = await _upload(client, cities_csv_path)
     response = await client.get(f"/api/datasets/{dataset_id}/schema/columns/amount/values")
@@ -195,6 +208,53 @@ async def test_replace_command_is_parsed_without_calling_the_llm(client, cities_
     assert body["preview_distinct_count"] == 5  # Delhi / NCR folded into Delhi
 
 
+async def test_regex_replace_command_is_parsed_without_calling_the_llm(client, cities_csv_path, monkeypatch):
+    dataset_id = await _upload(client, cities_csv_path)
+    monkeypatch.setattr(service, "get_llm_provider", lambda: ExplodingProvider())
+
+    resp = await client.post(
+        f"/api/datasets/{dataset_id}/schema/columns/city/merge/suggest",
+        json={"command": "Replace regex 'New York.*' with 'New York'"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["kind"] == "replace"
+    assert body["replacement"]["find"] == "New York.*"
+    assert body["replacement"]["is_regex"] is True
+    assert body["preview_distinct_count"] == 5  # NY, New York (folded), Delhi / NCR, Delhi, Mumbai
+
+
+async def test_regex_replace_command_rejects_an_invalid_pattern(client, cities_csv_path, monkeypatch):
+    dataset_id = await _upload(client, cities_csv_path)
+    monkeypatch.setattr(service, "get_llm_provider", lambda: ExplodingProvider())
+
+    resp = await client.post(
+        f"/api/datasets/{dataset_id}/schema/columns/city/merge/suggest",
+        json={"command": "Replace regex '(unclosed' with 'X'"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_regex_replace_accept_only_counts_rows_that_actually_change(client, cities_csv_path):
+    dataset_id = await _upload(client, cities_csv_path)
+    # "New York.*" also matches the value "New York" itself (zero-width `.*`),
+    # but replacing it with "New York" is a no-op for those rows -- only the
+    # 20 "New York City" rows should count as actually updated.
+    resp = await client.post(
+        f"/api/datasets/{dataset_id}/schema/columns/city/replace/accept",
+        json={"find": "New York.*", "replace": "New York", "is_regex": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["rows_updated"] == 20
+    assert body["replacements"][0]["is_regex"] is True
+
+    values_resp = await client.get(f"/api/datasets/{dataset_id}/schema/columns/city/values")
+    counts = {v["value"]: v["count"] for v in values_resp.json()["values"]}
+    assert counts["New York"] == 40  # original 20 "New York" + 20 folded "New York City"
+    assert "New York City" not in counts
+
+
 async def test_replace_accept_and_revert_with_slash_in_find(client, cities_csv_path):
     dataset_id = await _upload(client, cities_csv_path)
 
@@ -207,7 +267,12 @@ async def test_replace_accept_and_revert_with_slash_in_find(client, cities_csv_p
     assert accepted["rows_updated"] == 30
     assert accepted["distinct_count"] == 5
     replacement = accepted["replacements"][0]
-    assert replacement == {"find": "Delhi / NCR", "replace": "Delhi", "rows_affected": 30}
+    assert replacement == {
+        "find": "Delhi / NCR",
+        "replace": "Delhi",
+        "is_regex": False,
+        "rows_affected": 30,
+    }
 
     values_resp = await client.get(f"/api/datasets/{dataset_id}/schema/columns/city/values")
     counts = {v["value"]: v["count"] for v in values_resp.json()["values"]}

@@ -45,7 +45,7 @@ from src.datasets.schemas import (
 )
 from src.datasets.strategy_engine import suggest_custom_chart, suggest_visual_strategy
 from src.datasets.type_review import suggest_column_categories
-from src.datasets.value_merge import parse_replace_command, suggest_value_merge
+from src.datasets.value_merge import InvalidRegexError, parse_replace_command, suggest_value_merge
 from src.llm.client import get_llm_provider
 from src.query.schemas import QueryResponse
 from src.storage import r2_client
@@ -507,6 +507,7 @@ async def update_column(
 
 
 _COLUMN_VALUES_LIMIT = 200
+_COLUMN_VALUES_MAX_LIMIT = 5000
 
 
 def _find_column(record: repository.DatasetRecord, column_name: str) -> ColumnInfo:
@@ -540,15 +541,22 @@ def _assert_text_like(column: ColumnInfo) -> None:
 
 
 async def _column_values_response(
-    record: repository.DatasetRecord, column_name: str, response_cls: type = ColumnValuesResponse, **extra
+    record: repository.DatasetRecord,
+    column_name: str,
+    response_cls: type = ColumnValuesResponse,
+    limit: int = _COLUMN_VALUES_LIMIT,
+    **extra,
 ) -> ColumnValuesResponse:
     """Shared tail of every column-values/edit endpoint: fetch the current
     (post-rule) value counts, true distinct count, and both rule lists for
     one column, and build the response. `response_cls`/`extra` let
     accept_value_merge/accept_value_replacement reuse this for their
-    AcceptValueMergeResponse subclass's extra `rows_updated` field."""
+    AcceptValueMergeResponse subclass's extra `rows_updated` field. `limit`
+    is only ever raised above the default from get_column_values (the "Load
+    more" browsing entry point) -- a mutation response doesn't need the
+    caller's current page size, just a reasonable default."""
     counts = await duckdb_manager.column_value_counts(
-        record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, record.value_replacements
+        record.parquet_key, column_name, limit, record.value_remaps, record.value_replacements
     )
     distinct_count = await duckdb_manager.column_distinct_count(
         record.parquet_key, column_name, record.value_remaps, record.value_replacements
@@ -564,11 +572,16 @@ async def _column_values_response(
     )
 
 
-async def get_column_values(dataset_id: str, column_name: str, user: CurrentUser) -> ColumnValuesResponse:
+async def get_column_values(
+    dataset_id: str, column_name: str, user: CurrentUser, limit: int = _COLUMN_VALUES_LIMIT
+) -> ColumnValuesResponse:
     """A categorical/free-text column's current distinct values (post
     already-accepted edits) plus the merge/replacement rules in effect --
     backs the "Edit column" dialog's value list and its list of active,
-    individually-revertible rules."""
+    individually-revertible rules. `limit` lets the dialog's "Load more"
+    button page through a column with more than the default's worth of
+    distinct values -- `distinct_count` (the true, uncapped total) tells the
+    caller whether there's more to load."""
     record = repository.get_dataset(dataset_id, user.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -576,7 +589,7 @@ async def get_column_values(dataset_id: str, column_name: str, user: CurrentUser
     column = _find_column(record, column_name)
     _assert_text_like(column)
 
-    return await _column_values_response(record, column_name)
+    return await _column_values_response(record, column_name, limit=min(limit, _COLUMN_VALUES_MAX_LIMIT))
 
 
 def _merged_remaps(
@@ -652,13 +665,15 @@ async def suggest_value_merge_for_column(
 
     column = _find_column(record, column_name)
 
-    parsed_replace = parse_replace_command(command)
+    try:
+        parsed_replace = parse_replace_command(command)
+    except InvalidRegexError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if parsed_replace is not None:
         _assert_text_like(column)
-        find, replace = parsed_replace
-        preview_replacements = _merged_replacements(
-            record.value_replacements, column_name, ReplacementRule(find=find, replace=replace)
-        )
+        find, replace, is_regex = parsed_replace
+        replacement = ReplacementRule(find=find, replace=replace, is_regex=is_regex)
+        preview_replacements = _merged_replacements(record.value_replacements, column_name, replacement)
         preview_counts = await duckdb_manager.column_value_counts(
             record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps, preview_replacements
         )
@@ -667,7 +682,7 @@ async def suggest_value_merge_for_column(
         )
         return ValueMergeSuggestion(
             kind="replace",
-            replacement=ReplacementRule(find=find, replace=replace),
+            replacement=replacement,
             preview_values=[ColumnValueCount(value=v, count=c) for v, c in preview_counts],
             preview_distinct_count=preview_distinct,
         )
@@ -776,9 +791,9 @@ async def revert_value_merge(
 
 
 async def accept_value_replacement(
-    dataset_id: str, column_name: str, find: str, replace: str, user: CurrentUser
+    dataset_id: str, column_name: str, find: str, replace: str, user: CurrentUser, is_regex: bool = False
 ) -> AcceptValueMergeResponse:
-    """Persists a proposed substring replacement -- permanently, but
+    """Persists a proposed substring or regex replacement -- permanently, but
     individually revertible later via revert_value_replacement. See
     duckdb_manager._column_transform_expr for how this and value_remaps
     combine at read time, and CLAUDE.md/the dialog's "why revert always
@@ -790,11 +805,11 @@ async def accept_value_replacement(
     column = _find_column(record, column_name)
     _assert_text_like(column)
 
-    rows_updated = await duckdb_manager.count_containing(
-        record.parquet_key, column_name, find, record.value_remaps, record.value_replacements
+    rows_updated = await duckdb_manager.count_replacement_effect(
+        record.parquet_key, column_name, find, replace, is_regex, record.value_remaps, record.value_replacements
     )
 
-    rule = ReplacementRule(find=find, replace=replace, rows_affected=rows_updated)
+    rule = ReplacementRule(find=find, replace=replace, is_regex=is_regex, rows_affected=rows_updated)
     updated_replacements = _merged_replacements(record.value_replacements, column_name, rule)
     updated_record = repository.update_dataset_value_replacements(dataset_id, user.id, updated_replacements)
     if updated_record is None:
@@ -832,6 +847,7 @@ async def revert_value_replacement(
 
 
 _TAG_CANDIDATES_LIMIT = 200
+_TAG_CANDIDATES_MAX_LIMIT = 5000
 
 
 def _get_tag_config(record: repository.DatasetRecord, column: ColumnInfo) -> TagConfig:
@@ -846,10 +862,15 @@ def _get_tag_config(record: repository.DatasetRecord, column: ColumnInfo) -> Tag
     return TagConfig(tag_separator=column.multi_value_separator or ",")
 
 
-async def get_tag_candidates(dataset_id: str, column_name: str, user: CurrentUser) -> TagCandidatesResponse:
+async def get_tag_candidates(
+    dataset_id: str, column_name: str, user: CurrentUser, limit: int = _TAG_CANDIDATES_LIMIT
+) -> TagCandidatesResponse:
     """Every distinct tag this multi-value column's cells explode into under
     its current (persisted or default) separators, with row counts -- what
-    the "Tags" panel shows a user to curate into a vocabulary."""
+    the "Tags" panel shows a user to curate into a vocabulary. `limit` lets
+    the panel's "Load more" button page through a column with more tags than
+    the default's worth -- `total_tags` (the true, uncapped total) tells the
+    caller whether there's more to load."""
     record = repository.get_dataset(dataset_id, user.id)
     if record is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -863,7 +884,15 @@ async def get_tag_candidates(dataset_id: str, column_name: str, user: CurrentUse
         column_name,
         config.prefix_separator,
         config.tag_separator,
-        _TAG_CANDIDATES_LIMIT,
+        min(limit, _TAG_CANDIDATES_MAX_LIMIT),
+        record.value_remaps,
+        record.value_replacements,
+    )
+    total_tags = await duckdb_manager.tag_distinct_count(
+        record.parquet_key,
+        column_name,
+        config.prefix_separator,
+        config.tag_separator,
         record.value_remaps,
         record.value_replacements,
     )
@@ -872,6 +901,7 @@ async def get_tag_candidates(dataset_id: str, column_name: str, user: CurrentUse
         column=column_name,
         candidates=[TagCandidate(tag=tag, count=count) for tag, count in candidates],
         config=config,
+        total_tags=total_tags,
     )
 
 
@@ -902,11 +932,20 @@ async def update_tag_config(
         updated_record.value_remaps,
         updated_record.value_replacements,
     )
+    total_tags = await duckdb_manager.tag_distinct_count(
+        updated_record.parquet_key,
+        column_name,
+        config.prefix_separator,
+        config.tag_separator,
+        updated_record.value_remaps,
+        updated_record.value_replacements,
+    )
     return TagCandidatesResponse(
         dataset_id=updated_record.id,
         column=column_name,
         candidates=[TagCandidate(tag=tag, count=count) for tag, count in candidates],
         config=config,
+        total_tags=total_tags,
     )
 
 

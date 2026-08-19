@@ -98,9 +98,10 @@ async def update_column(
 async def get_column_values(
     dataset_id: str,
     column_name: str,
+    limit: int = Query(200, ge=1, le=5000),
     user: CurrentUser = Depends(get_current_user),
 ) -> ColumnValuesResponse:
-    return await service.get_column_values(dataset_id, column_name, user)
+    return await service.get_column_values(dataset_id, column_name, user, limit=limit)
 
 
 @router.post(
@@ -151,7 +152,9 @@ async def accept_column_value_replacement(
     request: AcceptReplacementRequest,
     user: CurrentUser = Depends(get_current_user),
 ) -> AcceptValueMergeResponse:
-    return await service.accept_value_replacement(dataset_id, column_name, request.find, request.replace, user)
+    return await service.accept_value_replacement(
+        dataset_id, column_name, request.find, request.replace, user, is_regex=request.is_regex
+    )
 
 
 @router.delete(
@@ -172,9 +175,10 @@ async def revert_column_value_replacement(
 async def get_column_tag_candidates(
     dataset_id: str,
     column_name: str,
+    limit: int = Query(200, ge=1, le=5000),
     user: CurrentUser = Depends(get_current_user),
 ) -> TagCandidatesResponse:
-    return await service.get_tag_candidates(dataset_id, column_name, user)
+    return await service.get_tag_candidates(dataset_id, column_name, user, limit=limit)
 
 
 @router.put(

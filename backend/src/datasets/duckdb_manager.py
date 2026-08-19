@@ -156,15 +156,23 @@ def _column_transform_expr(
 ) -> str | None:
     """The read-time expression for one column, or None if it has neither
     replacement nor merge rules (the common case). Replacements are chained
-    first (each a literal substring REPLACE, applied in rule order) and
-    merge rules are matched against the *result* of that chain -- so a merge
-    added after a replacement sees already-replaced text, not the original.
-    Always text: once a column has any rule, both branches of the resulting
-    CASE (and every REPLACE) operate on VARCHAR, so it reads as text
-    everywhere from then on, even for values no rule touches."""
+    first -- each either a literal substring REPLACE or, when the rule's
+    `is_regex` is set, a global regexp_replace (DuckDB's RE2 dialect, 'g'
+    flag so every occurrence is replaced, not just the first) -- applied in
+    rule order, and merge rules are matched against the *result* of that
+    chain, so a merge added after a replacement sees already-replaced text,
+    not the original. Always text: once a column has any rule, both branches
+    of the resulting CASE (and every REPLACE/regexp_replace) operate on
+    VARCHAR, so it reads as text everywhere from then on, even for values no
+    rule touches."""
     text_expr = f"CAST({ident} AS VARCHAR)"
     for rule in replacements or []:
-        text_expr = f"REPLACE({text_expr}, {_sql_string_literal(rule['find'])}, {_sql_string_literal(rule['replace'])})"
+        find_lit = _sql_string_literal(rule["find"])
+        replace_lit = _sql_string_literal(rule["replace"])
+        if rule.get("is_regex"):
+            text_expr = f"regexp_replace({text_expr}, {find_lit}, {replace_lit}, 'g')"
+        else:
+            text_expr = f"REPLACE({text_expr}, {find_lit}, {replace_lit})"
 
     when_clauses = []
     for rule in merge_rules or []:
@@ -186,7 +194,7 @@ def _scope_to_column(
 ) -> dict[str, list[dict]] | None:
     """Narrows a dataset-wide rules dict down to just one column's own rules
     -- avoids building a REPLACE clause for every edited column when only one
-    is actually being read (column_value_counts, count_containing)."""
+    is actually being read (column_value_counts, count_replacement_effect)."""
     return {column: rules[column]} if rules and column in rules else None
 
 
@@ -708,27 +716,43 @@ class DuckDBManager:
         finally:
             conn.close()
 
-    async def count_containing(
+    async def count_replacement_effect(
         self,
         parquet_key: str,
         column: str,
-        substring: str,
+        find: str,
+        replace: str,
+        is_regex: bool = False,
         value_remaps: dict[str, list[dict]] | None = None,
         value_replacements: dict[str, list[dict]] | None = None,
     ) -> int:
         """How many rows' current text for `column` (after whatever rules
-        already apply, passed in via value_remaps/value_replacements)
-        contains `substring` -- used to report how many rows a *new*
-        replacement rule is about to affect, before it's persisted."""
+        already apply, via value_remaps/value_replacements) would actually
+        CHANGE if this find/replace were applied -- used to report how many
+        rows a *new* replacement rule is about to affect, before it's
+        persisted. Deliberately checks the post-replace result differs from
+        the current value, not just whether `find` matches: a regex like
+        "New York.*" matches the value "New York" too, but replacing it with
+        "New York" is a no-op for that row -- counting matches instead of
+        actual changes would overcount."""
         return await run_in_threadpool(
-            self._count_containing_sync, parquet_key, column, substring, value_remaps, value_replacements
+            self._count_replacement_effect_sync,
+            parquet_key,
+            column,
+            find,
+            replace,
+            is_regex,
+            value_remaps,
+            value_replacements,
         )
 
-    def _count_containing_sync(
+    def _count_replacement_effect_sync(
         self,
         parquet_key: str,
         column: str,
-        substring: str,
+        find: str,
+        replace: str,
+        is_regex: bool,
         value_remaps: dict[str, list[dict]] | None,
         value_replacements: dict[str, list[dict]] | None,
     ) -> int:
@@ -744,8 +768,16 @@ class DuckDBManager:
                 f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
             )
             ident = _quote_ident(column)
+            text_expr = f"CAST({ident} AS VARCHAR)"
+            find_lit = _sql_string_literal(find)
+            replace_lit = _sql_string_literal(replace)
+            after_expr = (
+                f"regexp_replace({text_expr}, {find_lit}, {replace_lit}, 'g')"
+                if is_regex
+                else f"REPLACE({text_expr}, {find_lit}, {replace_lit})"
+            )
             row = conn.execute(
-                f"SELECT count(*) FROM data WHERE contains(CAST({ident} AS VARCHAR), {_sql_string_literal(substring)})"
+                f"SELECT count(*) FROM data WHERE {text_expr} IS DISTINCT FROM {after_expr}"
             ).fetchone()
             return row[0]
         finally:
@@ -849,6 +881,62 @@ class DuckDBManager:
                 f") WHERE trim(tag) != '' GROUP BY 1 ORDER BY 2 DESC LIMIT {int(limit)}"
             ).fetchall()
             return [(row[0], row[1]) for row in rows]
+        finally:
+            conn.close()
+
+    async def tag_distinct_count(
+        self,
+        parquet_key: str,
+        column: str,
+        prefix_separator: str | None,
+        tag_separator: str,
+        value_remaps: dict[str, list[dict]] | None = None,
+        value_replacements: dict[str, list[dict]] | None = None,
+    ) -> int:
+        """The true, uncapped count of distinct tags under the given
+        separators -- NOT capped like tag_candidates' returned list, so the
+        "Tags" panel can tell whether its (capped) candidate list is showing
+        everything or whether there's more to page through."""
+        return await run_in_threadpool(
+            self._tag_distinct_count_sync,
+            parquet_key,
+            column,
+            prefix_separator,
+            tag_separator,
+            value_remaps,
+            value_replacements,
+        )
+
+    def _tag_distinct_count_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        prefix_separator: str | None,
+        tag_separator: str,
+        value_remaps: dict[str, list[dict]] | None,
+        value_replacements: dict[str, list[dict]] | None,
+    ) -> int:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            replace_clause = _column_transform_replace_clause(
+                _scope_to_column(value_remaps, column), _scope_to_column(value_replacements, column)
+            )
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            text_expr = _tag_source_expr(ident, prefix_separator)
+            tag_sep_lit = _sql_string_literal(tag_separator)
+            row = conn.execute(
+                f"SELECT count(DISTINCT trim(tag)) FROM ("
+                f"SELECT unnest(string_split({text_expr}, {tag_sep_lit})) AS tag "
+                f"FROM data WHERE {ident} IS NOT NULL"
+                f") WHERE trim(tag) != ''"
+            ).fetchone()
+            return row[0]
         finally:
             conn.close()
 

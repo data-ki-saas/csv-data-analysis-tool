@@ -34,11 +34,31 @@ async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   }
 }
 
+/** FastAPI's `detail` is a plain string for a handler's own HTTPException,
+ * but a *list* of {loc, msg, type} objects for a 422 Pydantic validation
+ * error (e.g. a field exceeding max_length) -- passing that array straight
+ * into `Error()` stringifies to an unreadable "[object Object]" with no
+ * indication of what was actually wrong or which field. */
+function formatErrorDetail(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((entry) => {
+      if (entry && typeof entry === "object" && "msg" in entry) {
+        const field = Array.isArray(entry.loc) ? entry.loc.at(-1) : undefined;
+        return field ? `${field}: ${entry.msg}` : String(entry.msg);
+      }
+      return String(entry);
+    });
+    return messages.join("; ") || undefined;
+  }
+  return undefined;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     console.error(`[api] request to ${response.url} failed: HTTP ${response.status}`, body);
-    throw new Error(body.detail ?? `Request failed (HTTP ${response.status})`);
+    throw new Error(formatErrorDetail(body.detail) ?? `Request failed (HTTP ${response.status})`);
   }
   return response.json();
 }
@@ -69,7 +89,7 @@ export async function deleteDataset(datasetId: string) {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Request failed (HTTP ${response.status})`);
+    throw new Error(formatErrorDetail(body.detail) ?? `Request failed (HTTP ${response.status})`);
   }
 }
 
@@ -199,6 +219,7 @@ export interface ValueMergeRule {
 export interface ReplacementRule {
   find: string;
   replace: string;
+  is_regex: boolean;
   rows_affected: number | null;
 }
 
@@ -213,11 +234,12 @@ export interface ColumnValues {
   distinct_count: number;
 }
 
-export async function getColumnValues(datasetId: string, column: string) {
-  const response = await apiFetch(
-    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/values`,
-    { headers: await authHeader() }
+export async function getColumnValues(datasetId: string, column: string, limit?: number) {
+  const url = new URL(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/values`
   );
+  if (limit) url.searchParams.set("limit", String(limit));
+  const response = await apiFetch(url.toString(), { headers: await authHeader() });
   return handleResponse<ColumnValues>(response);
 }
 
@@ -272,13 +294,19 @@ export async function revertColumnValueMerge(datasetId: string, column: string, 
   return handleResponse<ColumnValues>(response);
 }
 
-export async function acceptColumnValueReplacement(datasetId: string, column: string, find: string, replace: string) {
+export async function acceptColumnValueReplacement(
+  datasetId: string,
+  column: string,
+  find: string,
+  replace: string,
+  isRegex = false
+) {
   const response = await apiFetch(
     `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/replace/accept`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeader()) },
-      body: JSON.stringify({ find, replace }),
+      body: JSON.stringify({ find, replace, is_regex: isRegex }),
     }
   );
   return handleResponse<AcceptMergeResult>(response);
@@ -311,13 +339,17 @@ export interface TagCandidates {
   column: string;
   candidates: TagCandidate[];
   config: TagConfig;
+  // The true, uncapped count of distinct tags -- not capped like
+  // `candidates` is, so "Load more" can tell whether there's more to fetch.
+  total_tags: number;
 }
 
-export async function getTagCandidates(datasetId: string, column: string) {
-  const response = await apiFetch(
-    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags`,
-    { headers: await authHeader() }
+export async function getTagCandidates(datasetId: string, column: string, limit?: number) {
+  const url = new URL(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/tags`
   );
+  if (limit) url.searchParams.set("limit", String(limit));
+  const response = await apiFetch(url.toString(), { headers: await authHeader() });
   return handleResponse<TagCandidates>(response);
 }
 
@@ -493,7 +525,7 @@ export async function revokeChartShare(datasetId: string, token: string) {
   );
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail ?? `Request failed (HTTP ${response.status})`);
+    throw new Error(formatErrorDetail(body.detail) ?? `Request failed (HTTP ${response.status})`);
   }
 }
 

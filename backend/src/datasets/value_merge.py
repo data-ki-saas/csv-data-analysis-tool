@@ -25,17 +25,48 @@ _REPLACE_COMMAND = re.compile(
     re.IGNORECASE,
 )
 
+# Same shape, marked with an explicit "regex" keyword -- e.g.
+# `replace regex 'Kolkata\(.*\)' with 'Kolkata'` to strip any parenthetical
+# qualifier. Checked BEFORE _REPLACE_COMMAND since it's the more specific of
+# the two shapes (a plain "replace 'X' with 'Y'" should never itself be
+# treated as a regex, since a literal find like "Delhi / NCR" or "St. Louis"
+# contains regex metacharacters that aren't meant to be interpreted as such).
+_REPLACE_REGEX_COMMAND = re.compile(
+    r"""^\s*replace\s+regex\s+['"“”](?P<find>.+?)['"“”]\s+with\s+['"“”](?P<replace>.*?)['"“”]\s*$""",
+    re.IGNORECASE,
+)
 
-def parse_replace_command(command: str) -> tuple[str, str] | None:
-    """Returns (find, replace) if `command` is a literal replace instruction,
-    else None (the caller should fall back to the LLM-based merge flow)."""
+
+class InvalidRegexError(Exception):
+    pass
+
+
+def parse_replace_command(command: str) -> tuple[str, str, bool] | None:
+    """Returns (find, replace, is_regex) if `command` is a literal or regex
+    replace instruction, else None (the caller should fall back to the
+    LLM-based merge flow). Raises InvalidRegexError if a "replace regex ..."
+    command's pattern doesn't even compile -- a clear, immediate error beats
+    a confusing DuckDB failure much later at accept time. This is only a
+    sanity check (Python's `re`, not DuckDB's actual RE2 engine), so it
+    catches outright typos, not every RE2/Python syntax difference."""
+    match = _REPLACE_REGEX_COMMAND.match(command)
+    if match is not None:
+        find = match.group("find").strip()
+        if not find:
+            return None
+        try:
+            re.compile(find)
+        except re.error as exc:
+            raise InvalidRegexError(f"{find!r} is not a valid regular expression: {exc}") from exc
+        return find, match.group("replace").strip(), True
+
     match = _REPLACE_COMMAND.match(command)
     if match is None:
         return None
     find = match.group("find").strip()
     if not find:
         return None
-    return find, match.group("replace").strip()
+    return find, match.group("replace").strip(), False
 
 SYSTEM_PROMPT = (
     "You merge similar or duplicate category values within one column, based on a "

@@ -80,6 +80,39 @@ async def test_update_tag_config_with_prefix_separator_cleans_up_candidates(clie
     assert followup.json()["config"]["prefix_separator"] == "-"
 
 
+async def test_tag_candidates_limit_paginates_and_reports_the_true_total(client, location_csv_path):
+    dataset_id = await _upload(client, location_csv_path)
+    response = await client.get(
+        f"/api/datasets/{dataset_id}/schema/columns/location/tags", params={"limit": 3}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    # 9 distinct tags total without prefix stripping (Mumbai, Pune,
+    # Hyderabad, Gurugram, Bengaluru, "Hybrid - Pune", Noida, Chennai, Delhi)
+    # -- the capped list is smaller, but the true total is still reported so
+    # "Load more" knows there's more to fetch.
+    assert len(body["candidates"]) == 3
+    assert body["total_tags"] == 9
+
+    fuller = await client.get(
+        f"/api/datasets/{dataset_id}/schema/columns/location/tags", params={"limit": 100}
+    )
+    assert len(fuller.json()["candidates"]) == 9
+    assert fuller.json()["total_tags"] == 9
+
+
+async def test_update_tag_config_accepts_a_multi_character_prefix_separator(client, location_csv_path):
+    # Regression test: prefix_separator used to be capped at 5 characters,
+    # which 422'd on a perfectly reasonable marker like the one the Edit
+    # column dialog's own placeholder text suggests -- "Hybrid - " (9 chars).
+    dataset_id = await _upload(client, location_csv_path)
+    response = await client.put(
+        f"/api/datasets/{dataset_id}/schema/columns/location/tags/config",
+        json={"prefix_separator": "Hybrid - ", "tag_separator": ",", "vocabulary": [], "include_other": False},
+    )
+    assert response.status_code == 200
+
+
 async def test_get_tag_candidates_rejects_non_categorical_column(client, location_csv_path):
     dataset_id = await _upload(client, location_csv_path)
     response = await client.get(f"/api/datasets/{dataset_id}/schema/columns/amount/tags")

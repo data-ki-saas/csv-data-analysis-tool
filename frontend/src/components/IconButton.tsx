@@ -184,6 +184,16 @@ export function CsvIcon() {
   );
 }
 
+export function InfoIcon() {
+  return (
+    <svg {...ICON_PROPS}>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="11" x2="12" y2="16" />
+      <circle cx="12" cy="7.5" r="0.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 interface IconButtonProps {
   label: string;
   onClick?: () => void;
@@ -210,6 +220,31 @@ export function IconButton({ label, onClick, disabled, children }: IconButtonPro
         className="pointer-events-none absolute -top-8 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-2 py-1 text-xs text-background opacity-0 transition-opacity group-hover/tooltip:opacity-100"
       >
         {label}
+      </span>
+    </span>
+  );
+}
+
+/** A small "i" info icon with a hover tooltip holding richer (multi-line,
+ * wrapping) guidance text -- the same group/tooltip hover mechanics as
+ * IconButton above, but sized for a paragraph of tips rather than a single
+ * short label. Used wherever a control's purpose isn't self-evident from
+ * its own label (regex syntax, separator fields, vocabulary curation, ...). */
+export function HelpTooltip({ label = "Help", children }: { label?: string; children: ReactNode }) {
+  return (
+    <span className="group/tooltip relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        className="rounded-full p-0.5 opacity-60 transition-opacity hover:opacity-100 [&_svg]:h-3.5 [&_svg]:w-3.5"
+      >
+        <InfoIcon />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 w-64 -translate-x-1/2 rounded border border-border bg-foreground px-3 py-2 text-left text-xs leading-relaxed text-background opacity-0 shadow-lg transition-opacity group-hover/tooltip:opacity-100"
+      >
+        {children}
       </span>
     </span>
   );

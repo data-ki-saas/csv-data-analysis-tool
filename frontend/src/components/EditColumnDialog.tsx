@@ -16,7 +16,9 @@ import {
   useUpdateColumn,
   useUpdateTagConfig,
 } from "@/hooks/useDatasetSchema";
-import { CloseIcon, IconButton } from "@/components/IconButton";
+import { CloseIcon, HelpTooltip, IconButton } from "@/components/IconButton";
+
+const PAGE_SIZE = 200;
 
 /** Hand-rolled modal (no existing Modal/Dialog primitive in this codebase --
  * see CLAUDE.md) -- a portal to <body> for correct stacking, a backdrop that
@@ -97,6 +99,9 @@ function ReplacementRuleRow({
           <span className="font-medium">&quot;{rule.find}&quot;</span>
           <span className="opacity-60"> → &quot;{rule.replace}&quot;</span>
         </div>
+        {rule.is_regex && (
+          <span className="ml-2 shrink-0 rounded bg-border px-1.5 py-0.5 text-[10px] opacity-70">regex</span>
+        )}
         <RowsAffectedBadge rows={rule.rows_affected} />
       </div>
       <button
@@ -151,7 +156,8 @@ export function EditColumnDialog({
 }) {
   const isCategorical = column.category === "categorical";
   const canEditValues = isCategorical || column.category === "free_text";
-  const values = useColumnValues(datasetId, column.name, canEditValues);
+  const [valuesLimit, setValuesLimit] = useState(PAGE_SIZE);
+  const values = useColumnValues(datasetId, column.name, canEditValues, valuesLimit);
   const updateColumn = useUpdateColumn(datasetId);
   const suggest = useSuggestValueMerge(datasetId, column.name);
   const acceptMerge = useAcceptValueMerge(datasetId, column.name);
@@ -164,7 +170,13 @@ export function EditColumnDialog({
   const [lastRowsUpdated, setLastRowsUpdated] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"edit" | "rules" | "tags">("edit");
 
-  const tagCandidates = useTagCandidates(datasetId, column.name, activeTab === "tags" && isCategorical);
+  const [tagsLimit, setTagsLimit] = useState(PAGE_SIZE);
+  const tagCandidates = useTagCandidates(
+    datasetId,
+    column.name,
+    activeTab === "tags" && isCategorical,
+    tagsLimit
+  );
   const updateTagConfig = useUpdateTagConfig(datasetId, column.name);
   const addTagChart = useAddTagChart(datasetId, column.name);
   // null = "no local edits yet, defer to the query result" -- same
@@ -223,9 +235,9 @@ export function EditColumnDialog({
         },
       });
     } else if (suggest.data.replacement) {
-      const { find, replace } = suggest.data.replacement;
+      const { find, replace, is_regex } = suggest.data.replacement;
       acceptReplacement.mutate(
-        { find, replace },
+        { find, replace, isRegex: is_regex },
         {
           onSuccess: (data) => {
             setLastRowsUpdated(data.rows_updated);
@@ -364,16 +376,29 @@ export function EditColumnDialog({
                 </p>
                 <div className="flex flex-wrap gap-3">
                   <label className="flex flex-col gap-1 text-xs">
-                    Prefix separator (optional)
+                    <span className="flex items-center gap-1">
+                      Prefix separator (optional)
+                      <HelpTooltip label="Prefix separator help">
+                        Splits off a leading label before extracting tags. e.g. &quot;-&quot; turns &quot;Hybrid
+                        - Pune, Noida&quot; into tags &quot;Pune&quot; and &quot;Noida&quot; -- the
+                        &quot;Hybrid&quot; part is dropped.
+                      </HelpTooltip>
+                    </span>
                     <input
                       value={tagConfig.prefix_separator ?? ""}
                       onChange={(e) => updateLocalTagConfig({ prefix_separator: e.target.value || null })}
-                      placeholder={`e.g. - (strips "Hybrid - " before splitting)`}
+                      placeholder={`Just the marker, e.g. "-" (splits "Hybrid - Pune" into "Hybrid" + "Pune")`}
                       className="w-64 rounded border border-border bg-surface px-2 py-1 text-sm"
                     />
                   </label>
                   <label className="flex flex-col gap-1 text-xs">
-                    Tag separator
+                    <span className="flex items-center gap-1">
+                      Tag separator
+                      <HelpTooltip label="Tag separator help">
+                        The character that separates multiple tags within one cell. Usually a comma --
+                        change it if your data uses &quot;;&quot; or &quot;/&quot; instead.
+                      </HelpTooltip>
+                    </span>
                     <input
                       value={tagConfig.tag_separator}
                       onChange={(e) => updateLocalTagConfig({ tag_separator: e.target.value || "," })}
@@ -385,14 +410,20 @@ export function EditColumnDialog({
 
               <section className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium">
+                  <h3 className="flex items-center gap-1 text-sm font-medium">
                     Vocabulary ({tagConfig.vocabulary.length} selected)
+                    <HelpTooltip label="Vocabulary help">
+                      Check the tags that should get their own bar in a chart -- this controls how many bars
+                      the chart has. Leave everything unchecked to count every tag found.
+                    </HelpTooltip>
                   </h3>
                 </div>
-                <p className="text-xs opacity-60">
-                  Check the tags that should count as their own bar in a chart -- this controls the size of
-                  the resulting chart. Leave everything unchecked to count every tag found.
-                </p>
+                {tagCandidates.data && (
+                  <p className="text-xs opacity-60">
+                    Showing {tagCandidates.data.candidates.length.toLocaleString()} of{" "}
+                    {tagCandidates.data.total_tags.toLocaleString()} tags
+                  </p>
+                )}
                 {tagCandidates.isLoading && <p className="text-xs opacity-60">Loading…</p>}
                 {tagCandidates.isError && (
                   <p className="text-xs text-red-600">{(tagCandidates.error as Error).message}</p>
@@ -408,6 +439,16 @@ export function EditColumnDialog({
                     />
                   ))}
                 </div>
+                {tagCandidates.data && tagCandidates.data.candidates.length < tagCandidates.data.total_tags && (
+                  <button
+                    type="button"
+                    onClick={() => setTagsLimit((l) => l + PAGE_SIZE)}
+                    disabled={tagCandidates.isFetching}
+                    className="self-start text-xs underline opacity-70 hover:opacity-100 disabled:opacity-30"
+                  >
+                    {tagCandidates.isFetching ? "Loading…" : "Load more"}
+                  </button>
+                )}
                 <label className="flex items-center gap-2 text-xs">
                   <input
                     type="checkbox"
@@ -473,7 +514,15 @@ export function EditColumnDialog({
               )}
 
               <section className="flex flex-col gap-1.5">
-                <h3 className="text-sm font-medium">Current values</h3>
+                <h3 className="text-sm font-medium">
+                  Current values
+                  {values.data && (
+                    <span className="ml-1 font-normal opacity-60">
+                      ({values.data.values.length.toLocaleString()} of{" "}
+                      {values.data.distinct_count.toLocaleString()})
+                    </span>
+                  )}
+                </h3>
                 {values.isLoading && <p className="text-xs opacity-60">Loading…</p>}
                 {values.isError && (
                   <p className="text-xs text-red-600">{(values.error as Error).message}</p>
@@ -490,10 +539,42 @@ export function EditColumnDialog({
                     </tbody>
                   </table>
                 </div>
+                {values.data && values.data.values.length < values.data.distinct_count && (
+                  <button
+                    type="button"
+                    onClick={() => setValuesLimit((l) => l + PAGE_SIZE)}
+                    disabled={values.isFetching}
+                    className="self-start text-xs underline opacity-70 hover:opacity-100 disabled:opacity-30"
+                  >
+                    {values.isFetching ? "Loading…" : "Load more"}
+                  </button>
+                )}
               </section>
 
               <section className="flex flex-col gap-1.5 border-t border-border pt-4">
-                <h3 className="text-sm font-medium">Ask AI to merge values, or replace text</h3>
+                <h3 className="flex items-center gap-1 text-sm font-medium">
+                  Ask AI to merge values, or replace text
+                  <HelpTooltip label="Command syntax help">
+                    Two kinds of command:
+                    <br />• Merge (AI-judged): &quot;merge NY and New York into New York&quot;
+                    <br />• Replace (literal): Replace &apos;X&apos; with &apos;Y&apos;
+                    <br />
+                    Each acts on the column&apos;s current values.
+                  </HelpTooltip>
+                  <HelpTooltip label="Regex replace guide">
+                    For pattern-based replacing:
+                    <br />
+                    <code>Replace regex &apos;PATTERN&apos; with &apos;TEXT&apos;</code>
+                    <br />
+                    <code>.</code> any character, <code>.*</code> any sequence
+                    <br />
+                    <code>\( \)</code> literal parentheses
+                    <br />
+                    <code>^ $</code> start / end, <code>|</code> or
+                    <br />
+                    e.g. <code>Kolkata\(.*\)</code> → <code>Kolkata</code>
+                  </HelpTooltip>
+                </h3>
                 <p className="text-xs opacity-60">
                   e.g. &quot;merge all values that contain NY or New York City into New York&quot;, or a literal{" "}
                   <code>Replace &apos;Delhi / NCR&apos; with &apos;Delhi&apos;</code>
@@ -538,6 +619,11 @@ export function EditColumnDialog({
                       <p className="text-xs">
                         <span className="font-medium">&quot;{proposal.replacement.find}&quot;</span>
                         <span className="opacity-60"> → &quot;{proposal.replacement.replace}&quot;</span>
+                        {proposal.replacement.is_regex && (
+                          <span className="ml-2 rounded bg-border px-1.5 py-0.5 text-[10px] opacity-70">
+                            regex
+                          </span>
+                        )}
                       </p>
                     )}
                     {isCategorical && values.data && (
