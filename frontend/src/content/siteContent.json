@@ -46,6 +46,18 @@
         "body": "Every column gets a best-guess category. Columns we're unsure about are flagged for review -- you can accept our AI's suggestion, override it yourself, or rename a column's display label at any time."
       },
       {
+        "heading": "Cleaning Up Messy Categories",
+        "body": "Real-world data is inconsistent -- the same city might show up as \"NY\", \"New York\", and \"New York City\". Just describe what you want in plain English (\"merge NY and New York City into New York\") and we'll find and consolidate the matching values for you, with a preview before anything is applied and a one-click undo afterward."
+      },
+      {
+        "heading": "Fixing Text and Formatting",
+        "body": "Need to strip a stray label, fix a typo pattern, or clean up formatting across an entire column? Type a plain-English find-and-replace instruction, or use a pattern-based rule for trickier cases (like removing a parenthetical note that appears in some values). Every change shows you exactly how many rows it affects before you commit, and can be reverted individually at any time."
+      },
+      {
+        "heading": "Splitting Multi-Value Columns into Tags",
+        "body": "Some columns pack more than one value into a single cell -- a \"location\" field listing \"Mumbai, Pune\" for someone who works across both cities. We automatically detect columns like this and let you split them into individual tags, choose exactly which tags matter (trimming out noise or rare one-offs), and generate a ready-to-use breakdown chart -- so a mention that's buried inside a combined value still gets counted properly instead of hiding in a wall of unique text."
+      },
+      {
         "heading": "Running SQL Queries",
         "body": "Once a dataset is uploaded, query it directly with SQL. Queries run against the underlying data engine and return results in real time, with no need to export to another tool."
       },
