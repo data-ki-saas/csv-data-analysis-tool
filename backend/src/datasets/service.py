@@ -345,9 +345,39 @@ def delete_dataset(dataset_id: str, user: CurrentUser) -> None:
     repository.delete_dataset(dataset_id, user.id)
 
 
+def _overlay_column_configs(
+    columns: list[ColumnInfo], record: repository.DatasetRecord
+) -> list[ColumnInfo]:
+    """The Column Types page's "Multi-value"/"Range" badges should reflect
+    what's actually configured for a column, not just what ingest-time
+    auto-detection originally guessed -- a user can save a tag/range config
+    on a column detection never flagged at all, or with a different
+    separator/unit than it guessed, and the badge needs to follow that
+    (and the tab it opens straight to), not the stale original guess.
+    Overlays each column's hint fields from its persisted config when one
+    exists; columns with no saved config are returned exactly as profiling
+    left them."""
+    tag_configs = record.tag_configs or {}
+    range_configs = record.range_configs or {}
+    if not tag_configs and not range_configs:
+        return columns
+
+    overlaid = []
+    for col in columns:
+        updates: dict = {}
+        if col.name in tag_configs:
+            updates["multi_value_separator"] = tag_configs[col.name].get("tag_separator") or ","
+        if col.name in range_configs:
+            updates["range_separator"] = range_configs[col.name].get("separator") or "-"
+            updates["range_unit"] = range_configs[col.name].get("unit")
+        overlaid.append(col.model_copy(update=updates) if updates else col)
+    return overlaid
+
+
 def _to_schema_response(
     record: repository.DatasetRecord, preview: QueryResult
 ) -> DatasetSchemaResponse:
+    columns = _overlay_column_configs([ColumnInfo(**col) for col in record.schema], record)
     return DatasetSchemaResponse(
         dataset_id=record.id,
         filename=record.filename,
@@ -357,7 +387,7 @@ def _to_schema_response(
         row_count=record.row_count,
         created_at=record.created_at,
         health_score=record.health_score,
-        columns=[ColumnInfo(**col) for col in record.schema],
+        columns=columns,
         preview=DatasetPreview(columns=preview.columns, rows=preview.rows),
         has_report_strategy=record.report_strategy is not None,
     )

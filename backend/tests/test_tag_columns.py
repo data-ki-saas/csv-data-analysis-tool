@@ -39,6 +39,20 @@ async def test_multi_value_column_is_flagged_at_ingest(client, location_csv_path
     assert column["multi_value_separator"] == ","
 
 
+async def test_schema_badge_reflects_updated_tag_separator_over_detected_one(client, location_csv_path):
+    dataset_id = await _upload(client, location_csv_path)
+    # location auto-detects tag_separator="," -- saving a config with a
+    # different separator should override what the Column Types page's
+    # badge shows, not leave it stuck on the original ingest-time guess.
+    await client.put(
+        f"/api/datasets/{dataset_id}/schema/columns/location/tags/config",
+        json={"prefix_separator": None, "tag_separator": ";", "vocabulary": [], "include_other": False},
+    )
+    response = await client.get(f"/api/datasets/{dataset_id}/schema")
+    column = next(c for c in response.json()["columns"] if c["name"] == "location")
+    assert column["multi_value_separator"] == ";"
+
+
 async def test_tag_candidates_without_prefix_config_show_raw_split_noise(client, location_csv_path):
     dataset_id = await _upload(client, location_csv_path)
     response = await client.get(f"/api/datasets/{dataset_id}/schema/columns/location/tags")

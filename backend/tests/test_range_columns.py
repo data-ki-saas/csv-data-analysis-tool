@@ -37,6 +37,45 @@ async def test_range_column_is_flagged_at_ingest(client, experience_csv_path):
     assert column["range_unit"] == "yrs"
 
 
+async def test_schema_badge_reflects_manually_saved_range_config(client, experience_csv_path):
+    dataset_id = await _upload(client, experience_csv_path)
+    # "department" never gets auto-flagged as a range column (it's a plain
+    # categorical label, "Engineering") -- confirm that up front.
+    before = await client.get(f"/api/datasets/{dataset_id}/schema")
+    department_before = next(c for c in before.json()["columns"] if c["name"] == "department")
+    assert department_before["range_separator"] is None
+
+    # Manually configure it as a range anyway (e.g. a column auto-detection
+    # missed) and confirm the schema response's badge fields pick it up --
+    # not just the dedicated .../range endpoint, but GET .../schema too,
+    # since that's what the Column Types page's badge actually reads.
+    save = await client.put(
+        f"/api/datasets/{dataset_id}/schema/columns/department/range/config",
+        json={"separator": "~", "unit": "u", "value_type": "midpoint"},
+    )
+    assert save.status_code == 200
+
+    after = await client.get(f"/api/datasets/{dataset_id}/schema")
+    department_after = next(c for c in after.json()["columns"] if c["name"] == "department")
+    assert department_after["range_separator"] == "~"
+    assert department_after["range_unit"] == "u"
+
+
+async def test_schema_badge_reflects_updated_separator_over_detected_one(client, experience_csv_path):
+    dataset_id = await _upload(client, experience_csv_path)
+    # experience_raw auto-detects as separator "-"/unit "yrs" -- saving a
+    # config with different values should override what the badge shows,
+    # not leave it stuck on the original ingest-time guess.
+    await client.put(
+        f"/api/datasets/{dataset_id}/schema/columns/experience_raw/range/config",
+        json={"separator": "to", "unit": "years", "value_type": "midpoint"},
+    )
+    response = await client.get(f"/api/datasets/{dataset_id}/schema")
+    column = next(c for c in response.json()["columns"] if c["name"] == "experience_raw")
+    assert column["range_separator"] == "to"
+    assert column["range_unit"] == "years"
+
+
 async def test_get_range_preview_uses_detected_defaults(client, experience_csv_path):
     dataset_id = await _upload(client, experience_csv_path)
     response = await client.get(f"/api/datasets/{dataset_id}/schema/columns/experience_raw/range")
