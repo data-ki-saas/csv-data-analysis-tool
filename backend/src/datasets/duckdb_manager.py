@@ -135,6 +135,46 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _sql_string_literal(value: str) -> str:
+    """Safely quote an untrusted string as a SQL literal (source/target
+    values in a merge rule come from CSV data and/or LLM output)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _remap_replace_clause(value_remaps: dict[str, list[dict]] | None) -> str:
+    """Builds the `REPLACE (...)` clause of a `SELECT * REPLACE (...)` that
+    applies every column's accepted value-merge rules at read time -- the
+    Parquet file itself is never rewritten (see CLAUDE.md), so a merge can
+    only ever be layered on as a view-time CASE expression. Every remapped
+    column is cast to VARCHAR (both the matched and the fall-through branch,
+    since a CASE's branches must share one output type) -- once a column has
+    any merge rule, it reads as text everywhere from then on, even for
+    values no rule touches. Returns "" (no REPLACE clause at all) when there's
+    nothing to remap, so callers can build a plain `SELECT * FROM ...` for the
+    overwhelmingly common case of a dataset with no merges."""
+    if not value_remaps:
+        return ""
+
+    parts = []
+    for column, rules in value_remaps.items():
+        if not rules:
+            continue
+        ident = _quote_ident(column)
+        text_ident = f"CAST({ident} AS VARCHAR)"
+        when_clauses = []
+        for rule in rules:
+            sources = rule.get("sources") or []
+            if not sources:
+                continue
+            in_list = ", ".join(_sql_string_literal(s) for s in sources)
+            when_clauses.append(f"WHEN {text_ident} IN ({in_list}) THEN {_sql_string_literal(rule['target'])}")
+        if when_clauses:
+            case_expr = f"CASE {' '.join(when_clauses)} ELSE {text_ident} END"
+            parts.append(f"{case_expr} AS {ident}")
+
+    return f" REPLACE ({', '.join(parts)})" if parts else ""
+
+
 def _new_r2_connection() -> duckdb.DuckDBPyConnection:
     """A fresh connection configured to read/write R2 (S3-compatible) objects.
 
@@ -386,8 +426,10 @@ def _profile_columns(
     return profiles
 
 
-def _preview(conn: duckdb.DuckDBPyConnection, from_clause: str, limit: int) -> QueryResult:
-    cursor = conn.execute(f"SELECT * FROM {from_clause} LIMIT {limit}")
+def _preview(
+    conn: duckdb.DuckDBPyConnection, from_clause: str, limit: int, replace_clause: str = ""
+) -> QueryResult:
+    cursor = conn.execute(f"SELECT *{replace_clause} FROM {from_clause} LIMIT {limit}")
     columns = [d[0] for d in cursor.description]
     rows = [list(row) for row in cursor.fetchall()]
     return QueryResult(columns=columns, rows=rows, row_count=len(rows), truncated=False)
@@ -429,13 +471,19 @@ class DuckDBManager:
             conn.close()
 
     async def execute_query(
-        self, parquet_key: str, sql: str, max_rows: int | None = None
+        self,
+        parquet_key: str,
+        sql: str,
+        max_rows: int | None = None,
+        value_remaps: dict[str, list[dict]] | None = None,
     ) -> QueryResult:
         max_rows = max_rows or settings.query_max_rows
         _assert_readonly_select(sql)
-        return await run_in_threadpool(self._execute_sync, parquet_key, sql, max_rows)
+        return await run_in_threadpool(self._execute_sync, parquet_key, sql, max_rows, value_remaps)
 
-    def _execute_sync(self, parquet_key: str, sql: str, max_rows: int) -> QueryResult:
+    def _execute_sync(
+        self, parquet_key: str, sql: str, max_rows: int, value_remaps: dict[str, list[dict]] | None
+    ) -> QueryResult:
         # DuckDB doesn't support prepared parameters in CREATE VIEW, so the URI is
         # interpolated directly — safe here because parquet_key is always a
         # server-generated "{uuid4}.parquet" key, never derived from user input.
@@ -444,7 +492,10 @@ class DuckDBManager:
 
         conn = _new_r2_connection()
         try:
-            conn.execute(f"CREATE VIEW data AS SELECT * FROM read_parquet('{_s3_uri(parquet_key)}')")
+            replace_clause = _remap_replace_clause(value_remaps)
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
             cursor = conn.execute(sql)
             columns = [description[0] for description in cursor.description]
             rows = cursor.fetchmany(max_rows + 1)
@@ -458,19 +509,74 @@ class DuckDBManager:
         finally:
             conn.close()
 
-    async def preview_dataset(self, parquet_key: str, limit: int = 20) -> QueryResult:
+    async def preview_dataset(
+        self,
+        parquet_key: str,
+        limit: int = 20,
+        value_remaps: dict[str, list[dict]] | None = None,
+    ) -> QueryResult:
         """A fixed, non-user-supplied `SELECT * LIMIT n` against the stored
         Parquet — used by the schema API to serve a fresh preview without
         needing the readonly-SQL guard that arbitrary query SQL requires."""
-        return await run_in_threadpool(self._preview_sync, parquet_key, limit)
+        return await run_in_threadpool(self._preview_sync, parquet_key, limit, value_remaps)
 
-    def _preview_sync(self, parquet_key: str, limit: int) -> QueryResult:
+    def _preview_sync(
+        self, parquet_key: str, limit: int, value_remaps: dict[str, list[dict]] | None
+    ) -> QueryResult:
         if "'" in parquet_key or ";" in parquet_key:
             raise UnsafeQueryError("Invalid dataset storage key")
 
         conn = _new_r2_connection()
         try:
-            return _preview(conn, f"read_parquet('{_s3_uri(parquet_key)}')", int(limit))
+            replace_clause = _remap_replace_clause(value_remaps)
+            return _preview(
+                conn, f"read_parquet('{_s3_uri(parquet_key)}')", int(limit), replace_clause
+            )
+        finally:
+            conn.close()
+
+    async def column_value_counts(
+        self,
+        parquet_key: str,
+        column: str,
+        limit: int = 200,
+        value_remaps: dict[str, list[dict]] | None = None,
+    ) -> list[tuple[str, int]]:
+        """Distinct values (as their string representation, post-remap) and
+        row counts for one column, most frequent first -- backs the "Edit
+        column" dialog's value list. Capped at `limit` distinct values; a
+        column with more distinct values than that only shows its most
+        common ones, since this is a UI aid, not an exhaustive export."""
+        return await run_in_threadpool(
+            self._column_value_counts_sync, parquet_key, column, limit, value_remaps
+        )
+
+    def _column_value_counts_sync(
+        self,
+        parquet_key: str,
+        column: str,
+        limit: int,
+        value_remaps: dict[str, list[dict]] | None,
+    ) -> list[tuple[str, int]]:
+        if "'" in parquet_key or ";" in parquet_key:
+            raise UnsafeQueryError("Invalid dataset storage key")
+
+        conn = _new_r2_connection()
+        try:
+            # Only this column's own rules matter for its value list -- no
+            # need to build a REPLACE clause for every remapped column in the
+            # dataset just to read one of them.
+            scoped_remaps = {column: value_remaps[column]} if value_remaps and column in value_remaps else None
+            replace_clause = _remap_replace_clause(scoped_remaps)
+            conn.execute(
+                f"CREATE VIEW data AS SELECT *{replace_clause} FROM read_parquet('{_s3_uri(parquet_key)}')"
+            )
+            ident = _quote_ident(column)
+            rows = conn.execute(
+                f"SELECT CAST({ident} AS VARCHAR), count(*) FROM data "
+                f"WHERE {ident} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT {int(limit)}"
+            ).fetchall()
+            return [(row[0], row[1]) for row in rows]
         finally:
             conn.close()
 

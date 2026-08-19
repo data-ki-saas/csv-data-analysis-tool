@@ -178,6 +178,68 @@ export async function updateColumn(datasetId: string, column: string, update: Up
   return handleResponse<DatasetSchema>(response);
 }
 
+export interface ColumnValueCount {
+  value: string;
+  count: number;
+}
+
+export interface ValueMergeRule {
+  target: string;
+  sources: string[];
+}
+
+export interface ColumnValues {
+  dataset_id: string;
+  column: string;
+  values: ColumnValueCount[];
+  rules: ValueMergeRule[];
+}
+
+export async function getColumnValues(datasetId: string, column: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/values`,
+    { headers: await authHeader() }
+  );
+  return handleResponse<ColumnValues>(response);
+}
+
+export interface ValueMergeSuggestion {
+  groups: ValueMergeRule[];
+  preview_values: ColumnValueCount[];
+}
+
+export async function suggestColumnValueMerge(datasetId: string, column: string, command: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge/suggest`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ command }),
+    }
+  );
+  return handleResponse<ValueMergeSuggestion>(response);
+}
+
+export async function acceptColumnValueMerge(datasetId: string, column: string, groups: ValueMergeRule[]) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge/accept`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({ groups }),
+    }
+  );
+  return handleResponse<ColumnValues>(response);
+}
+
+export async function revertColumnValueMerge(datasetId: string, column: string, target: string) {
+  const response = await apiFetch(
+    `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge/${encodeURIComponent(target)}`,
+    { method: "DELETE", headers: await authHeader() }
+  );
+  return handleResponse<ColumnValues>(response);
+}
+
 export interface QueryResponse {
   columns: string[];
   rows: unknown[][];

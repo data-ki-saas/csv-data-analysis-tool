@@ -215,3 +215,50 @@ class GenerateInsightsRequest(BaseModel):
 
 class InsightsResponse(BaseModel):
     insights: list[str]
+
+
+class ValueMergeRule(BaseModel):
+    """One accepted or proposed merge: every value in `sources` reads as
+    `target` from then on, everywhere this column is read (see
+    duckdb_manager._remap_replace_clause)."""
+
+    target: str
+    sources: list[str]
+
+
+class ColumnValueCount(BaseModel):
+    value: str
+    count: int
+
+
+class ColumnValuesResponse(BaseModel):
+    """A categorical column's current distinct values (post already-accepted
+    merges) plus the merge rules in effect -- backs the "Edit column"
+    dialog's value list and its list of active, individually-revertible
+    rules."""
+
+    dataset_id: str
+    column: str
+    values: list[ColumnValueCount]
+    rules: list[ValueMergeRule]
+
+
+class SuggestValueMergeRequest(BaseModel):
+    # e.g. "merge all values that contain NY or New York City into New York" --
+    # a single-turn instruction against the column's current state, not a
+    # multi-turn chat (see src/datasets/value_merge.py).
+    command: str = Field(min_length=1, max_length=300)
+
+
+class ValueMergeSuggestion(BaseModel):
+    """A proposed (not yet persisted) merge -- `groups` is what Accept would
+    write, `preview_values` is what the column's value list would look like
+    if it were accepted, so the dialog can show a before/after without
+    touching the stored rules yet."""
+
+    groups: list[ValueMergeRule]
+    preview_values: list[ColumnValueCount]
+
+
+class AcceptValueMergeRequest(BaseModel):
+    groups: list[ValueMergeRule] = Field(min_length=1)

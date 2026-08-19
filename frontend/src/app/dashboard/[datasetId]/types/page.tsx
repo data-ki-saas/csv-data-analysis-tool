@@ -6,6 +6,8 @@ import { ColumnCategory, ColumnInfo } from "@/lib/api";
 import { useDatasetSchema, useReviewColumnTypes, useUpdateColumn } from "@/hooks/useDatasetSchema";
 import { useUpdateDataset } from "@/hooks/useDatasets";
 import { cn } from "@/lib/utils";
+import { EditColumnDialog } from "@/components/EditColumnDialog";
+import { EditIcon, IconButton } from "@/components/IconButton";
 
 const CATEGORY_OPTIONS: { value: ColumnCategory; label: string }[] = [
   { value: "datetime", label: "Datetime" },
@@ -102,6 +104,8 @@ export default function ColumnTypesPage() {
   const [localNotes, setLocalNotes] = useState<string | null>(null);
   const notes = localNotes ?? data?.notes ?? "";
 
+  const [editingColumn, setEditingColumn] = useState<ColumnInfo | null>(null);
+
   useEffect(() => {
     if (localNotes === null) return;
     const timeout = setTimeout(() => updateDataset.mutate({ datasetId, notes: localNotes }), 800);
@@ -185,6 +189,7 @@ export default function ColumnTypesPage() {
                     <th className="px-3 py-2 font-medium">Confidence</th>
                     <th className="px-3 py-2 font-medium">Source</th>
                     <th className="px-3 py-2 font-medium">Nulls</th>
+                    <th className="px-3 py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -250,6 +255,11 @@ export default function ColumnTypesPage() {
                           </p>
                         )}
                       </td>
+                      <td className="px-3 py-2">
+                        <IconButton label="Edit column" onClick={() => setEditingColumn(col)}>
+                          <EditIcon />
+                        </IconButton>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -297,6 +307,14 @@ export default function ColumnTypesPage() {
             </div>
           </section>
         </>
+      )}
+
+      {editingColumn && (
+        <EditColumnDialog
+          datasetId={datasetId}
+          column={editingColumn}
+          onClose={() => setEditingColumn(null)}
+        />
       )}
     </main>
   );

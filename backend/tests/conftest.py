@@ -66,6 +66,7 @@ class FakeDatasetsTable:
             "created_at": "2026-01-01T00:00:00Z",
             "content_hash": None,
             "report_strategy": None,
+            "value_remaps": None,
             "description": None,
             "notes": None,
             **payload,
@@ -121,6 +122,16 @@ class FakeDatasetsTable:
         row.update(fields)
         return repository.DatasetRecord(**row)
 
+    def update_value_remaps(
+        self, dataset_id: str, owner_id: str, value_remaps: dict[str, list[dict]] | None
+    ) -> repository.DatasetRecord | None:
+        row = self.rows.get(dataset_id)
+        if row is None or row["owner_id"] != owner_id:
+            return None
+        row["value_remaps"] = value_remaps
+        row["report_strategy"] = None  # mirrors the real function's atomic cache invalidation
+        return repository.DatasetRecord(**row)
+
     # NB: this method is named `list`, which shadows the builtin for any
     # annotation written below it in this class body (Python resolves class-body
     # annotations against the class namespace first) -- keep it as the last
@@ -154,6 +165,7 @@ def fake_datasets_table(monkeypatch):
     monkeypatch.setattr(repository, "update_dataset_schema", table.update_schema)
     monkeypatch.setattr(repository, "update_dataset_report_strategy", table.update_report_strategy)
     monkeypatch.setattr(repository, "update_dataset_metadata", table.update_metadata)
+    monkeypatch.setattr(repository, "update_dataset_value_remaps", table.update_value_remaps)
     return table
 
 

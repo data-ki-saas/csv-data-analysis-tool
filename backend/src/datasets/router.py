@@ -3,7 +3,9 @@ from fastapi import APIRouter, Depends, UploadFile
 from src.core.auth import CurrentUser, get_current_user
 from src.datasets import service
 from src.datasets.schemas import (
+    AcceptValueMergeRequest,
     ChartRecommendation,
+    ColumnValuesResponse,
     CustomChartRequest,
     DatasetInfo,
     DatasetSchemaResponse,
@@ -13,10 +15,12 @@ from src.datasets.schemas import (
     ReportStrategyRequest,
     ReportStrategyResponse,
     ReviewColumnsRequest,
+    SuggestValueMergeRequest,
     UpdateChartRequest,
     UpdateColumnRequest,
     UpdateDatasetRequest,
     UploadResponse,
+    ValueMergeSuggestion,
 )
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -81,6 +85,53 @@ async def update_column(
     return await service.update_column(
         dataset_id, column_name, category=request.category, alias=request.alias, user=user
     )
+
+
+@router.get(
+    "/{dataset_id}/schema/columns/{column_name}/values", response_model=ColumnValuesResponse
+)
+async def get_column_values(
+    dataset_id: str,
+    column_name: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> ColumnValuesResponse:
+    return await service.get_column_values(dataset_id, column_name, user)
+
+
+@router.post(
+    "/{dataset_id}/schema/columns/{column_name}/merge/suggest", response_model=ValueMergeSuggestion
+)
+async def suggest_column_value_merge(
+    dataset_id: str,
+    column_name: str,
+    request: SuggestValueMergeRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> ValueMergeSuggestion:
+    return await service.suggest_value_merge_for_column(dataset_id, column_name, request.command, user)
+
+
+@router.post(
+    "/{dataset_id}/schema/columns/{column_name}/merge/accept", response_model=ColumnValuesResponse
+)
+async def accept_column_value_merge(
+    dataset_id: str,
+    column_name: str,
+    request: AcceptValueMergeRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> ColumnValuesResponse:
+    return await service.accept_value_merge(dataset_id, column_name, request.groups, user)
+
+
+@router.delete(
+    "/{dataset_id}/schema/columns/{column_name}/merge/{target}", response_model=ColumnValuesResponse
+)
+async def revert_column_value_merge(
+    dataset_id: str,
+    column_name: str,
+    target: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> ColumnValuesResponse:
+    return await service.revert_value_merge(dataset_id, column_name, target, user)
 
 
 @router.post("/{dataset_id}/report-strategy", response_model=ReportStrategyResponse)
