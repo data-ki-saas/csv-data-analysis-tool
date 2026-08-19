@@ -4,6 +4,7 @@ from src.core.auth import CurrentUser, get_current_user
 from src.datasets import service
 from src.datasets.schemas import (
     AcceptValueMergeRequest,
+    AcceptValueMergeResponse,
     ChartRecommendation,
     ColumnValuesResponse,
     CustomChartRequest,
@@ -111,14 +112,14 @@ async def suggest_column_value_merge(
 
 
 @router.post(
-    "/{dataset_id}/schema/columns/{column_name}/merge/accept", response_model=ColumnValuesResponse
+    "/{dataset_id}/schema/columns/{column_name}/merge/accept", response_model=AcceptValueMergeResponse
 )
 async def accept_column_value_merge(
     dataset_id: str,
     column_name: str,
     request: AcceptValueMergeRequest,
     user: CurrentUser = Depends(get_current_user),
-) -> ColumnValuesResponse:
+) -> AcceptValueMergeResponse:
     return await service.accept_value_merge(dataset_id, column_name, request.groups, user)
 
 

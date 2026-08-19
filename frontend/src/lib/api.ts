@@ -220,6 +220,12 @@ export async function suggestColumnValueMerge(datasetId: string, column: string,
   return handleResponse<ValueMergeSuggestion>(response);
 }
 
+export interface AcceptMergeResult extends ColumnValues {
+  // How many rows' displayed value actually changed as a result of this one
+  // accept call -- not a running total, just this action's effect.
+  rows_updated: number;
+}
+
 export async function acceptColumnValueMerge(datasetId: string, column: string, groups: ValueMergeRule[]) {
   const response = await apiFetch(
     `${API_BASE_URL}/api/datasets/${datasetId}/schema/columns/${encodeURIComponent(column)}/merge/accept`,
@@ -229,7 +235,7 @@ export async function acceptColumnValueMerge(datasetId: string, column: string, 
       body: JSON.stringify({ groups }),
     }
   );
-  return handleResponse<ColumnValues>(response);
+  return handleResponse<AcceptMergeResult>(response);
 }
 
 export async function revertColumnValueMerge(datasetId: string, column: string, target: string) {

@@ -262,3 +262,11 @@ class ValueMergeSuggestion(BaseModel):
 
 class AcceptValueMergeRequest(BaseModel):
     groups: list[ValueMergeRule] = Field(min_length=1)
+
+
+class AcceptValueMergeResponse(ColumnValuesResponse):
+    # How many rows' displayed value actually changed as a result of THIS
+    # accept call (a source value merging into itself doesn't count) -- not
+    # a running total, just this one action's effect, so the dialog can
+    # confirm what just happened.
+    rows_updated: int

@@ -16,6 +16,7 @@ from src.datasets.duckdb_manager import MalformedCsvError, QueryResult, UnsafeQu
 from src.datasets.profiling import CONFIDENCE_REVIEW_THRESHOLD
 from src.datasets.insights import generate_insights
 from src.datasets.schemas import (
+    AcceptValueMergeResponse,
     ChartRecommendation,
     ColumnInfo,
     ColumnValueCount,
@@ -605,7 +606,7 @@ async def suggest_value_merge_for_column(
 
 async def accept_value_merge(
     dataset_id: str, column_name: str, groups: list[ValueMergeRule], user: CurrentUser
-) -> ColumnValuesResponse:
+) -> AcceptValueMergeResponse:
     """Persists a proposed merge -- permanently, but individually revertible
     later via revert_value_merge."""
     record = repository.get_dataset(dataset_id, user.id)
@@ -613,6 +614,22 @@ async def accept_value_merge(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     _find_column(record, column_name)
+
+    # Counts as they stood immediately before THIS merge (but reflecting any
+    # earlier, already-accepted rules) -- used below to report how many rows
+    # this specific accept call actually changed the displayed value for, as
+    # opposed to the column's total row count or its all-time merged total.
+    before_counts = dict(
+        await duckdb_manager.column_value_counts(
+            record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, record.value_remaps
+        )
+    )
+    rows_updated = sum(
+        before_counts.get(source, 0)
+        for group in groups
+        for source in group.sources
+        if source != group.target
+    )
 
     updated_remaps = _merged_remaps(record.value_remaps, column_name, groups)
     updated_record = repository.update_dataset_value_remaps(dataset_id, user.id, updated_remaps)
@@ -622,11 +639,12 @@ async def accept_value_merge(
     counts = await duckdb_manager.column_value_counts(
         updated_record.parquet_key, column_name, _COLUMN_VALUES_LIMIT, updated_record.value_remaps
     )
-    return ColumnValuesResponse(
+    return AcceptValueMergeResponse(
         dataset_id=updated_record.id,
         column=column_name,
         values=[ColumnValueCount(value=v, count=c) for v, c in counts],
         rules=[ValueMergeRule(**r) for r in (updated_record.value_remaps or {}).get(column_name, [])],
+        rows_updated=rows_updated,
     )
 
 

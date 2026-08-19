@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ColumnInfo, ValueMergeRule } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   useAcceptValueMerge,
   useColumnValues,
@@ -81,6 +82,8 @@ export function EditColumnDialog({
 
   const [aliasValue, setAliasValue] = useState(column.alias);
   const [command, setCommand] = useState("");
+  const [lastRowsUpdated, setLastRowsUpdated] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"merge" | "rules">("merge");
 
   function handleRename() {
     const trimmed = aliasValue.trim();
@@ -89,15 +92,22 @@ export function EditColumnDialog({
 
   function handleAsk() {
     if (!command.trim() || suggest.isPending) return;
+    setLastRowsUpdated(null);
     suggest.mutate(command.trim(), { onSuccess: () => setCommand("") });
   }
 
   function handleAccept() {
     if (!suggest.data || suggest.data.groups.length === 0) return;
-    accept.mutate(suggest.data.groups, { onSuccess: () => suggest.reset() });
+    accept.mutate(suggest.data.groups, {
+      onSuccess: (data) => {
+        setLastRowsUpdated(data.rows_updated);
+        suggest.reset();
+      },
+    });
   }
 
   const proposal = suggest.data && suggest.data.groups.length > 0 ? suggest.data : null;
+  const ruleCount = values.data?.rules.length ?? 0;
 
   return (
     <DialogShell onClose={onClose}>
@@ -145,104 +155,138 @@ export function EditColumnDialog({
 
       {canMergeValues && (
         <>
-          <section className="flex flex-col gap-1.5">
-            <h3 className="text-sm font-medium">Active merge rules</h3>
-            {values.data && values.data.rules.length === 0 && (
-              <p className="text-xs opacity-60">No values merged yet.</p>
-            )}
-            {values.data?.rules.map((rule) => (
-              <RuleRow
-                key={rule.target}
-                rule={rule}
-                disabled={revert.isPending}
-                onRevert={() => revert.mutate(rule.target)}
-              />
-            ))}
-            {revert.isError && <p className="text-xs text-red-600">{(revert.error as Error).message}</p>}
-          </section>
-
-          <section className="flex flex-col gap-1.5">
-            <h3 className="text-sm font-medium">Current values</h3>
-            {values.isLoading && <p className="text-xs opacity-60">Loading…</p>}
-            {values.isError && (
-              <p className="text-xs text-red-600">{(values.error as Error).message}</p>
-            )}
-            <div className="max-h-40 overflow-y-auto rounded border border-border">
-              <table className="min-w-full text-left text-xs">
-                <tbody>
-                  {values.data?.values.map((v) => (
-                    <tr key={v.value} className="border-b border-border last:border-b-0">
-                      <td className="px-2 py-1">{v.value}</td>
-                      <td className="px-2 py-1 text-right opacity-60">{v.count.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-1.5 border-t border-border pt-4">
-            <h3 className="text-sm font-medium">Ask AI to merge values</h3>
-            <p className="text-xs opacity-60">
-              e.g. &quot;merge all values that contain NY or New York City into New York&quot;
-            </p>
-            <div className="flex gap-2">
-              <input
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-                placeholder="Describe the merge…"
-                className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
-              />
+          <div className="flex gap-1 border-b border-border">
+            {(["merge", "rules"] as const).map((tab) => (
               <button
+                key={tab}
                 type="button"
-                onClick={handleAsk}
-                disabled={suggest.isPending || !command.trim()}
-                className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-accent-foreground disabled:opacity-50"
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "-mb-px border-b-2 px-3 py-1.5 text-sm capitalize",
+                  activeTab === tab
+                    ? "border-accent font-medium"
+                    : "border-transparent opacity-60 hover:opacity-100"
+                )}
               >
-                {suggest.isPending ? "Asking…" : "Ask"}
+                {tab === "merge" ? "Merge values" : `Active rules (${ruleCount})`}
               </button>
-            </div>
-            {suggest.isError && (
-              <p className="text-xs text-red-600">{(suggest.error as Error).message}</p>
-            )}
-            {suggest.isSuccess && !proposal && (
-              <p className="text-xs opacity-60">The AI didn&apos;t find any values to merge for that command.</p>
-            )}
+            ))}
+          </div>
 
-            {proposal && (
-              <div className="flex flex-col gap-2 rounded border border-accent/50 bg-accent/5 p-3">
-                <p className="text-sm font-medium">Proposed merge</p>
-                {proposal.groups.map((g) => (
-                  <p key={g.target} className="text-xs">
-                    <span className="font-medium">{g.target}</span>
-                    <span className="opacity-60"> ← {g.sources.join(", ")}</span>
-                  </p>
+          {activeTab === "rules" && (
+            <section className="flex flex-col gap-1.5">
+              {ruleCount === 0 && <p className="text-xs opacity-60">No values merged yet.</p>}
+              <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
+                {values.data?.rules.map((rule) => (
+                  <RuleRow
+                    key={rule.target}
+                    rule={rule}
+                    disabled={revert.isPending}
+                    onRevert={() => {
+                      setLastRowsUpdated(null);
+                      revert.mutate(rule.target);
+                    }}
+                  />
                 ))}
-                <div className="mt-1 flex gap-2">
+              </div>
+              {revert.isError && <p className="text-xs text-red-600">{(revert.error as Error).message}</p>}
+            </section>
+          )}
+
+          {activeTab === "merge" && (
+            <>
+              {lastRowsUpdated !== null && (
+                <p className="rounded border border-accent/50 bg-accent/5 px-3 py-1.5 text-xs">
+                  {lastRowsUpdated.toLocaleString()} row{lastRowsUpdated === 1 ? "" : "s"} updated.
+                </p>
+              )}
+
+              <section className="flex flex-col gap-1.5">
+                <h3 className="text-sm font-medium">Current values</h3>
+                {values.isLoading && <p className="text-xs opacity-60">Loading…</p>}
+                {values.isError && (
+                  <p className="text-xs text-red-600">{(values.error as Error).message}</p>
+                )}
+                <div className="max-h-40 overflow-y-auto rounded border border-border">
+                  <table className="min-w-full text-left text-xs">
+                    <tbody>
+                      {values.data?.values.map((v) => (
+                        <tr key={v.value} className="border-b border-border last:border-b-0">
+                          <td className="px-2 py-1">{v.value}</td>
+                          <td className="px-2 py-1 text-right opacity-60">{v.count.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="flex flex-col gap-1.5 border-t border-border pt-4">
+                <h3 className="text-sm font-medium">Ask AI to merge values</h3>
+                <p className="text-xs opacity-60">
+                  e.g. &quot;merge all values that contain NY or New York City into New York&quot;
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    value={command}
+                    onChange={(e) => setCommand(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+                    placeholder="Describe the merge…"
+                    className="w-full rounded border border-border bg-surface px-2 py-1 text-sm"
+                  />
                   <button
                     type="button"
-                    onClick={handleAccept}
-                    disabled={accept.isPending}
-                    className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground disabled:opacity-50"
+                    onClick={handleAsk}
+                    disabled={suggest.isPending || !command.trim()}
+                    className="shrink-0 rounded bg-accent px-3 py-1 text-sm text-accent-foreground disabled:opacity-50"
                   >
-                    {accept.isPending ? "Applying…" : "Accept"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => suggest.reset()}
-                    disabled={accept.isPending}
-                    className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
-                  >
-                    Discard
+                    {suggest.isPending ? "Asking…" : "Ask"}
                   </button>
                 </div>
-                {accept.isError && (
-                  <p className="text-xs text-red-600">{(accept.error as Error).message}</p>
+                {suggest.isError && (
+                  <p className="text-xs text-red-600">{(suggest.error as Error).message}</p>
                 )}
-              </div>
-            )}
-          </section>
+                {suggest.isSuccess && !proposal && (
+                  <p className="text-xs opacity-60">
+                    The AI didn&apos;t find any values to merge for that command.
+                  </p>
+                )}
+
+                {proposal && (
+                  <div className="flex flex-col gap-2 rounded border border-accent/50 bg-accent/5 p-3">
+                    <p className="text-sm font-medium">Proposed merge</p>
+                    {proposal.groups.map((g) => (
+                      <p key={g.target} className="text-xs">
+                        <span className="font-medium">{g.target}</span>
+                        <span className="opacity-60"> ← {g.sources.join(", ")}</span>
+                      </p>
+                    ))}
+                    <div className="mt-1 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAccept}
+                        disabled={accept.isPending}
+                        className="rounded bg-accent px-3 py-1 text-xs text-accent-foreground disabled:opacity-50"
+                      >
+                        {accept.isPending ? "Applying…" : "Accept"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => suggest.reset()}
+                        disabled={accept.isPending}
+                        className="rounded border border-border px-3 py-1 text-xs disabled:opacity-50"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                    {accept.isError && (
+                      <p className="text-xs text-red-600">{(accept.error as Error).message}</p>
+                    )}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
         </>
       )}
     </DialogShell>
